@@ -1,0 +1,662 @@
+<title>Памятка Cutroom</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Unbounded:wght@500;600&display=swap&subset=cyrillic">
+<style>
+/* Layout: one reading column; screenshots break out a little wider; slate-like step headers */
+:root {
+  --bg: #f4f2ee;
+  --paper: #fffdf9;
+  --ink: #1b1d22;
+  --dim: #5d6370;
+  --faint: #8d929c;
+  --line: #e2ded5;
+  --accent: #b2700f;          /* amber, same signal colour as the app */
+  --accent-soft: rgb(178 112 15 / .12);
+  --slate: #1d2027;           /* clapperboard strip */
+  --slate-ink: #f1efe9;
+  --ok: #26845a;
+  --warn: #9a6b00;
+  --info: #2f63ad;
+  --area: rgb(232 163 61 / .95);
+  --wave-a: #3a8a6c;
+  --wave-b: #2f63ad;
+  --font-display: "Unbounded", "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0e12; --paper: #14161c; --ink: #e8e9ee; --dim: #a1a7b4; --faint: #737a88; --line: #262a35;
+    --accent: #e8a33d; --accent-soft: rgb(232 163 61 / .14); --slate: #0a0b0e; --slate-ink: #e8e9ee;
+    --ok: #4fb67d; --warn: #d9b44a; --info: #6f9bd8; --wave-a: #6fae96; --wave-b: #6f9bd8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d0e12; --paper: #14161c; --ink: #e8e9ee; --dim: #a1a7b4; --faint: #737a88; --line: #262a35;
+  --accent: #e8a33d; --accent-soft: rgb(232 163 61 / .14); --slate: #0a0b0e; --slate-ink: #e8e9ee;
+  --ok: #4fb67d; --warn: #d9b44a; --info: #6f9bd8; --wave-a: #6fae96; --wave-b: #6f9bd8; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 400 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+.col { max-width: 700px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font: 600 clamp(30px, 5vw, 46px)/1.1 var(--font-display); letter-spacing: -0.01em; }
+h2 { font: 600 clamp(21px, 3vw, 27px)/1.2 var(--font-display); }
+h3 { font: 600 17px/1.3 var(--font-body); }
+p { margin: 0; }
+section { display: flex; flex-direction: column; gap: 18px; }
+.lead { font-size: 18px; color: var(--dim); max-width: 660px; }
+kbd { font: 500 13px var(--font-mono); padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--paper); white-space: nowrap; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* hero */
+.hero { display: flex; flex-direction: column; gap: 16px; }
+.eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; margin-top: 8px; }
+.fact { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.fact b { font: 600 15px var(--font-body); }
+.fact span { color: var(--dim); font-size: 14px; }
+
+/* pipeline schematic */
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0; counter-reset: s; }
+.flow li { position: relative; padding: 14px 10px 12px; border-top: 3px solid var(--line); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.flow li::before { counter-increment: s; content: counter(s); font: 600 13px var(--font-mono); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--paper); border: 1.5px solid var(--faint); position: absolute; top: -15px; left: 10px; }
+.flow li b { font-size: 14.5px; margin-top: 10px; }
+.flow li span { font-size: 13px; color: var(--dim); }
+.flow li .t { font: 500 12px var(--font-mono); color: var(--faint); }
+.flow li.you { border-top-color: var(--accent); }
+.flow li.you::before { background: var(--accent); color: #1a1206; border-color: var(--accent); }
+.flow li.soon { opacity: .55; }
+@media (max-width: 760px) {
+  .flow { grid-template-columns: 1fr; }
+  .flow li { border-top: 0; border-left: 3px solid var(--line); padding: 4px 0 18px 26px; }
+  .flow li::before { left: -15px; top: 2px; }
+  .flow li.you { border-left-color: var(--accent); }
+  .flow li b { margin-top: 0; }
+}
+
+/* step header: a clapperboard strip */
+.slate { display: flex; align-items: stretch; border-radius: 8px; overflow: hidden; background: var(--slate); color: var(--slate-ink); width: fit-content; max-width: 100%; }
+.slate .stripes { width: clamp(20px, 8vw, 46px); flex: none; background: repeating-linear-gradient(-45deg, var(--slate-ink) 0 8px, var(--slate) 8px 16px); opacity: .9; }
+.slate .cell { min-width: 0; overflow-wrap: anywhere; padding: 6px 14px; font: 500 12px/1.3 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; border-left: 1px solid rgb(255 255 255 / .15); display: flex; flex-direction: column; justify-content: center; }
+.slate .cell b { font: 600 15px var(--font-mono); letter-spacing: .02em; }
+
+/* screenshot with callouts: positions are frame pixels, turned into % by CSS */
+figure { margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.shot { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #0b0c10; max-width: 100%; box-shadow: 0 10px 30px rgb(0 0 0 / .12); }
+.shot img { display: block; width: 100%; height: auto; }
+.area { position: absolute; border: 2px solid var(--area); border-radius: 6px; pointer-events: none;
+  left: calc(var(--x) / var(--W) * 100%); top: calc(var(--y) / var(--H) * 100%);
+  width: calc(var(--w) / var(--W) * 100%); height: calc(var(--h) / var(--H) * 100%); }
+.area::before { content: attr(data-n); position: absolute; left: -11px; top: -11px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--area); color: #1a1206; font: 600 13px/24px var(--font-body); text-align: center; box-shadow: 0 0 0 3px rgb(11 12 16 / .7); }
+.area.r::before { left: auto; right: -11px; }
+.area.b::before { top: auto; bottom: -11px; }
+@media (max-width: 600px) { .area::before { width: 18px; height: 18px; font-size: 11px; line-height: 18px; left: -8px; top: -8px; } .area { border-width: 1.5px; } }
+.legend { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 8px 22px; }
+.legend li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; font-size: 15px; align-items: start; min-width: 0; overflow-wrap: anywhere; }
+.legend li::before { content: attr(data-n); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #1a1206; font: 600 13px/24px var(--font-body); text-align: center; }
+.legend b { font-weight: 600; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .pair { grid-template-columns: 1fr; } }
+
+/* text blocks */
+.do { display: flex; flex-direction: column; gap: 10px; padding: 0; margin: 0; list-style: none; }
+.do li { padding-left: 26px; position: relative; }
+.do li::before { content: ""; position: absolute; left: 4px; top: .62em; width: 10px; height: 10px; border-radius: 2px; background: var(--accent); }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 15px; }
+.prompts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 10px; }
+.prompts p { background: var(--paper); border: 1px dashed var(--line); border-radius: 8px; padding: 12px 14px; font-size: 15px; }
+.prompts p small { display: block; color: var(--faint); font-size: 12.5px; margin-bottom: 4px; }
+.chip { display: inline-block; font: 500 13px var(--font-body); padding: 1px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper); white-space: nowrap; }
+.chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.acc { color: var(--accent); border-color: var(--accent); }
+.filler { color: var(--accent); font-weight: 500; }
+.low { text-decoration: underline wavy var(--warn); text-underline-offset: 4px; }
+
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 12px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+tr:last-child td { border-bottom: 0; }
+
+/* diagrams */
+.diagram { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.diagram svg text { font-family: var(--font-body); fill: var(--ink); }
+.diagram .cap { font-size: 13px; fill: var(--dim); }
+.diagram .mono { font-family: var(--font-mono); }
+
+.soon-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 10px; }
+.soon-list div { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--paper); font-size: 14.5px; color: var(--dim); }
+.soon-list b { color: var(--ink); display: block; font-size: 15px; }
+footer { color: var(--faint); font-size: 13.5px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">Для съёмочной группы и сценаристов</span>
+  <h1>Памятка Cutroom</h1>
+  <p class="lead">Cutroom собирает черновой монтаж из ваших дублей и запускается ярлыком с рабочего стола. Он сам расшифровывает речь, находит ракурсы одного дубля, а ИИ-монтажёр предлагает план и режет строго между словами. Последнее слово за вами: пока вы не нажали «Утвердить», ничего не режется.</p>
+  <div class="facts">
+    <div class="fact"><b>Что даёте вы</b><span>Папку со съёмкой и пару фраз о том, какой нужен ролик</span></div>
+    <div class="fact"><b>Что делает Cutroom</b><span>Лёгкие копии для просмотра, текст речи, сведение камер, план и черновик</span></div>
+    <div class="fact"><b>Где хранится</b><span>Всё на этом компьютере. Исходники не меняются, рабочие файлы лежат в папке <span class="mono">edit</span></span></div>
+  </div>
+</header>
+
+<section>
+  <h2>Путь ролика</h2>
+  <ol class="flow" aria-label="Шаги работы">
+    <li><b>Запуск</b><span>Ярлык Cutroom, связь с Claude поднимается сама</span><span class="t">несколько секунд</span></li>
+    <li><b>Папка</b><span>Все дубли и камеры в одной папке</span><span class="t">1 мин</span></li>
+    <li><b>Подготовка</b><span>Копии для просмотра и текст речи</span><span class="t">≈ 25 мин на час 4K</span></li>
+    <li><b>Ракурсы</b><span>Камеры одного дубля сводятся по звуку</span><span class="t">≈ 10 сек</span></li>
+    <li><b>План от ИИ</b><span>Агент читает текст и предлагает монтаж</span><span class="t">2–3 мин</span></li>
+    <li class="you"><b>Утверждаете вы</b><span>Правите план, отвечаете на вопросы</span><span class="t">ваше решение</span></li>
+    <li><b>Черновик и правки</b><span>Камеры, маркеры, правка кусков агентом, звук, цвет, инфографика</span><span class="t">несколько минут</span></li>
+    <li class="soon"><b>Финал</b><span>Полный рендер и субтитры</span><span class="t">в разработке</span></li>
+  </ol>
+</section>
+
+<section>
+  <h2>Экран за 30 секунд</h2>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/02-workspace.webp" alt="Главное окно Cutroom: слева список дублей, в центре плеер, справа план монтажа, внизу таймлайн" width="1440" height="900">
+      <span class="area" data-n="1" style="--x:120;--y:5;--w:272;--h:30"></span>
+      <span class="area" data-n="2" style="--x:2;--y:42;--w:316;--h:606"></span>
+      <span class="area" data-n="3" style="--x:322;--y:42;--w:776;--h:505"></span>
+      <span class="area" data-n="4" style="--x:322;--y:552;--w:776;--h:96"></span>
+      <span class="area" data-n="5" style="--x:1102;--y:42;--w:336;--h:606"></span>
+      <span class="area" data-n="6" style="--x:2;--y:653;--w:1436;--h:245"></span>
+      <span class="area r" data-n="7" style="--x:1001;--y:7;--w:88;--h:26"></span>
+      <span class="area r" data-n="8" style="--x:1092;--y:7;--w:87;--h:26"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span><b>Этап:</b> черновик → доработка → финал</span></li>
+      <li data-n="2"><span><b>Слева:</b> файлы по дублям, текст речи, найденные проблемы</span></li>
+      <li data-n="3"><span><b>Плеер:</b> исходник, все ракурсы сразу или готовый монтаж</span></li>
+      <li data-n="4"><span><b>Задача:</b> пишете обычными словами, какой нужен ролик</span></li>
+      <li data-n="5"><span><b>Справа:</b> план монтажа и решения агента</span></li>
+      <li data-n="6"><span><b>Таймлайн:</b> картинка, звук, графика и слова по времени</span></li>
+      <li data-n="7"><span><b>Очередь:</b> что считается сейчас и сколько ждать</span></li>
+      <li data-n="8"><span><b>Система:</b> видеокарта и модели (обычно не нужна)</span></li>
+    </ol>
+  </figure>
+</section>
+
+<!-- START -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Старт<b>0</b></span><span class="cell">Запуск<b>и связь с Claude</b></span></div>
+  <div class="col"><p>Дважды щёлкните ярлык <b>Cutroom</b> на рабочем столе или найдите его в меню «Пуск». Окно открывается сразу, а за несколько секунд Cutroom сам поднимает всё нужное: обработку видео и связь с Claude, через которую работают агенты-монтажёры. Ничего запускать вручную не нужно.</p></div>
+  <figure>
+    <div class="shot" style="--W:680;--H:40">
+      <img src="img/13-header-right.webp" alt="Правая часть шапки Cutroom: кнопки Команды, Очередь, зелёный индикатор Claude, Система" width="680" height="40">
+      <span class="area" data-n="1" style="--x:258;--y:6;--w:74;--h:28"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span><b>Индикатор Claude</b> в шапке. Зелёная точка — агенты готовы. Жёлтая «Войти в Claude» — нажмите, войдите в аккаунт в браузере, точка станет зелёной сама. Красная «Claude не найден» — на компьютере нет приложения Claude для рабочего стола</span></li>
+    </ol>
+  </figure>
+  <div class="pair">
+    <figure>
+      <div class="shot" style="--W:1064;--H:255">
+        <img src="img/14-claude-card.webp" alt="Карточка Claude Code на экране Система: состояние «подключён, агенты готовы», версия, план, путь к программе и кнопка «Проверить снова»" width="1064" height="255" loading="lazy">
+        <span class="area" data-n="2" style="--x:16;--y:44;--w:350;--h:22"></span>
+        <span class="area" data-n="3" style="--x:22;--y:166;--w:122;--h:28"></span>
+      </div>
+    </figure>
+    <ol class="legend" style="grid-template-columns:1fr;align-content:start">
+      <li data-n="2"><span>Подробности — на экране <b>«Система»</b>: подключено ли, какая версия и аккаунт</span></li>
+      <li data-n="3"><span><b>«Проверить снова»</b> — если входили в Claude в другом месте и хотите обновить статус сразу</span></li>
+    </ol>
+  </div>
+  <p class="note">Если входа нет, Cutroom при запуске один раз сам откроет окно входа. Войти нужно только один раз на этом компьютере: дальше связь поднимается сама. Проверка входа не тратит лимиты Claude.</p>
+  <h3 style="margin:28px 0 10px">На новом компьютере</h3>
+  <div class="pair">
+    <div class="col">
+      <p>Установщик — небольшой архив <span class="mono">Cutroom-…-setup.zip</span>. Распакуйте его и запустите <b>«Установить Cutroom.cmd»</b>: права администратора не нужны, ярлык появится на рабочем столе. Если Windows предупредит о неизвестном издателе — «Подробнее» → «Выполнить в любом случае».</p>
+      <p style="margin-top:10px">При первом запуске Cutroom сам скачает недостающее: Python с модулями (4–5 ГБ с видеокартой NVIDIA, около 1 ГБ без неё), программу обработки видео и модель распознавания речи. Это делается один раз. Окно можно свернуть, а если связь оборвётся, «Повторить» докачает с места остановки.</p>
+      <p style="margin-top:10px">Агентам нужно приложение Claude для рабочего стола с выполненным входом — индикатор в шапке подскажет.</p>
+    </div>
+    <figure>
+      <div class="shot" style="--W:660;--H:430">
+        <img src="img/15-setup.webp" alt="Экран первого запуска: Cutroom скачивает Python и модули с поддержкой видеокарты NVIDIA (8%), затем программу обработки видео и модель распознавания речи" width="660" height="430" loading="lazy">
+        <span class="area" data-n="1" style="--x:20;--y:96;--w:618;--h:100"></span>
+        <span class="area" data-n="2" style="--x:20;--y:206;--w:618;--h:110"></span>
+      </div>
+      <ol class="legend" style="grid-template-columns:1fr">
+        <li data-n="1"><span>Что качается сейчас, сколько и примерно как долго</span></li>
+        <li data-n="2"><span>Что будет следом. Всё берётся с официальных сайтов и сверяется по контрольным суммам; ваши видео никуда не отправляются</span></li>
+      </ol>
+    </figure>
+  </div>
+</section>
+
+<!-- STEP 1 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>1</b></span><span class="cell">Открыть<b>папку со съёмкой</b></span></div>
+  <div class="col"><p>Сложите все дубли и все камеры одной съёмки в одну папку: Sony, iPhone, отдельный звук. Переименовывать и сортировать ничего не нужно. Перетащите папку в окно или нажмите «Выбрать папку». Копии одного файла Cutroom узнает сам и не станет обрабатывать дважды.</p></div>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/01-welcome.webp" alt="Стартовый экран: зона для перетаскивания папки и список недавних проектов" width="1440" height="900" loading="lazy">
+      <span class="area" data-n="1" style="--x:400;--y:352;--w:640;--h:166"></span>
+      <span class="area" data-n="2" style="--x:400;--y:586;--w:640;--h:90"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span>Перетащите сюда папку или нажмите <b>«Выбрать папку…»</b></span></li>
+      <li data-n="2"><span><b>Недавние</b> — вернуться к проекту в один клик</span></li>
+    </ol>
+  </figure>
+</section>
+
+<!-- STEP 2 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>2</b></span><span class="cell">Подготовить<b>файлы</b></span></div>
+  <div class="col"><p>Нажмите <b>«Подготовить … файлов»</b> слева. Cutroom сделает лёгкие копии для мгновенной перемотки, вынет звук и расшифрует речь. На час 4K уходит около 25 минут, работать можно параллельно. У каждого файла загораются отметки:</p></div>
+  <p><span class="chip ok">прокси</span> копия для просмотра готова &nbsp; <span class="chip ok">аудио</span> звук вынут &nbsp; <span class="chip ok">текст</span> речь расшифрована &nbsp; <span class="chip acc">текст 40%</span> идёт сейчас</p>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/07-queue.webp" alt="Открытая очередь задач внизу окна: идёт одна задача с полосой прогресса и кнопкой «Отменить»" width="1440" height="900" loading="lazy">
+      <span class="area r" data-n="1" style="--x:1014;--y:7;--w:80;--h:26"></span>
+      <span class="area" data-n="2" style="--x:2;--y:488;--w:1436;--h:100"></span>
+      <span class="area r" data-n="3" style="--x:1100;--y:558;--w:330;--h:24"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span><b>Очередь</b> открывается кнопкой в шапке или клавишей <kbd>`</kbd></span></li>
+      <li data-n="2"><span>Каждая задача видна заранее, с оценкой времени</span></li>
+      <li data-n="3"><span>Прогресс, сколько осталось и <b>«Отменить»</b></span></li>
+    </ol>
+  </figure>
+</section>
+
+<!-- STEP 3 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>3</b></span><span class="cell">Проверить<b>текст речи</b></span></div>
+  <div class="col"><p>Вкладка <b>«Транскрипт»</b> показывает всё, что сказано в выбранном файле. Клик по слову перематывает плеер, двойной клик сразу играет с этого места. Слова-паразиты Cutroom не вычищает: по ним монтажёр решает, где резать.</p></div>
+  <div class="pair">
+    <figure>
+      <div class="shot" style="--W:1440;--H:900">
+        <img src="img/03-transcript.webp" alt="Вкладка Транскрипт: фразы с временем, слова-паразиты выделены цветом, сомнительные подчёркнуты волной" width="1440" height="900" loading="lazy">
+        <span class="area r" data-n="1" style="--x:178;--y:79;--w:132;--h:38"></span>
+        <span class="area" data-n="2" style="--x:4;--y:134;--w:64;--h:20"></span>
+        <span class="area r" data-n="3" style="--x:252;--y:162;--w:30;--h:22"></span>
+        <span class="area b" data-n="4" style="--x:68;--y:218;--w:46;--h:22"></span>
+      </div>
+    </figure>
+    <ol class="legend" style="grid-template-columns:1fr;align-content:start">
+      <li data-n="1"><span>Сколько слов, <span class="filler">паразитов</span> и <span class="low">сомнительных</span> мест</span></li>
+      <li data-n="2"><span>Время фразы: клик — перейти к ней</span></li>
+      <li data-n="3"><span><span class="filler">Янтарным</span> выделены «вот», «ну», «э-э»</span></li>
+      <li data-n="4"><span><span class="low">Волной</span> подчёркнуты слова, которые два распознавателя услышали по-разному. На стыке их стоит проверить на слух.</span></li>
+    </ol>
+  </div>
+</section>
+
+<!-- STEP 4 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>4</b></span><span class="cell">Свести<b>ракурсы</b></span></div>
+  <div class="col"><p>Нажмите <b>«Синхронизировать ракурсы»</b>. Cutroom сравнит звук всех камер и сгруппирует их по дублям. Режим плеера <b>«Ракурсы»</b> показывает один и тот же момент со всех камер.</p></div>
+  <div class="diagram" role="img" aria-label="Схема: звук двух камер сравнивается, вторая камера сдвигается на 4,79 секунды, и кадры совпадают">
+    <svg viewBox="0 0 900 230" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="wa" width="12" height="40" patternUnits="userSpaceOnUse"><rect x="2" y="8" width="3" height="24" rx="1.5" fill="var(--wave-a)"/><rect x="7" y="14" width="3" height="12" rx="1.5" fill="var(--wave-a)"/></pattern>
+        <pattern id="wb" width="12" height="40" patternUnits="userSpaceOnUse"><rect x="2" y="8" width="3" height="24" rx="1.5" fill="var(--wave-b)"/><rect x="7" y="14" width="3" height="12" rx="1.5" fill="var(--wave-b)"/></pattern>
+      </defs>
+      <text x="0" y="22" class="cap">До сведения</text>
+      <text x="0" y="56" font-size="14">Камера A</text>
+      <rect x="110" y="38" width="320" height="30" fill="url(#wa)"/>
+      <rect x="250" y="34" width="22" height="38" rx="4" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <text x="0" y="106" font-size="14">Камера B</text>
+      <rect x="180" y="88" width="250" height="30" fill="url(#wb)"/>
+      <rect x="320" y="84" width="22" height="38" rx="4" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <text x="196" y="146" class="cap">один и тот же хлопок или слово — в разное время</text>
+      <path d="M470 78 H530" stroke="var(--accent)" stroke-width="2.5" marker-end="url(#arr)"/>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker></defs>
+      <text x="474" y="66" font-size="13" fill="var(--accent)">сравнить звук</text>
+      <text x="560" y="22" class="cap">После</text>
+      <text x="560" y="56" font-size="14">A</text>
+      <rect x="590" y="38" width="300" height="30" fill="url(#wa)"/>
+      <text x="560" y="106" font-size="14">B</text>
+      <rect x="660" y="88" width="230" height="30" fill="url(#wb)"/>
+      <line x1="731" y1="30" x2="731" y2="126" stroke="var(--accent)" stroke-width="2" stroke-dasharray="4 4"/>
+      <text x="731" y="146" font-size="13" fill="var(--accent)" class="mono" text-anchor="middle">B сдвинута на +4,79 с</text>
+      <text x="0" y="196" font-size="14">Камера без звука или снятая в другое время останется в группе <tspan font-weight="600">«Без пары»</tspan> — это нормально.</text>
+      <text x="0" y="218" class="cap">Точность — доли кадра: на проверке сдвиг держится в пределах 10 мс по всему файлу.</text>
+    </svg>
+  </div>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/04-angles.webp" alt="Режим Ракурсы: четыре камеры одного дубля в сетке, у каждой подписан сдвиг; слева группа дубля с кнопками сдвига на кадр" width="1440" height="900" loading="lazy">
+      <span class="area" data-n="1" style="--x:155;--y:141;--w:158;--h:28"></span>
+      <span class="area" data-n="2" style="--x:92;--y:273;--w:212;--h:30"></span>
+      <span class="area" data-n="3" style="--x:322;--y:78;--w:776;--h:430"></span>
+      <span class="area r" data-n="4" style="--x:1034;--y:89;--w:54;--h:22"></span>
+      <span class="area" data-n="5" style="--x:44;--y:704;--w:1390;--h:66"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span><b>«Синхронизировать ракурсы»</b> — один раз после подготовки</span></li>
+      <li data-n="2"><span><span class="chip ok">синхр.</span> всё точно, <span class="chip warn">проверить</span> — взгляните глазами. <b>−1 / +1</b> сдвигают камеру на кадр, <b>«опорн.»</b> делает её главной</span></li>
+      <li data-n="3"><span>Все камеры показывают <b>один и тот же момент</b>. Клик по камере делает её основной</span></li>
+      <li data-n="4"><span>На сколько секунд камера сдвинута относительно главной</span></li>
+      <li data-n="5"><span>На таймлайне камеры стоят со своими сдвигами</span></li>
+    </ol>
+  </figure>
+</section>
+
+<!-- STEP 5 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>5</b></span><span class="cell">План монтажа<b>и утверждение</b></span></div>
+  <div class="col"><p>Внизу под плеером напишите задачу так, как сказали бы монтажёру. Кнопки над полем (формат, длина, темп, графика) только подсказывают, главное — текст. Нажмите <b>«Предложить стратегию»</b>: через 2–3 минуты справа появится план в 4–8 предложениях.</p></div>
+  <div class="prompts">
+    <p><small>Короткий ролик</small>Выжимка на 3–4 минуты для дилеров, только главные выводы. Начни с цифры про рынок, закончи вопросом.</p>
+    <p><small>Шортс</small>Вертикальный ролик 60 секунд, живой темп. Обязательно оставь шутку про кофе, убери всё про цены.</p>
+    <p><small>Полная запись</small>Лекция целиком, 10–12 минут. Убери разговоры на площадке и оговорки, графику дай на цифрах.</p>
+  </div>
+  <div class="pair">
+    <figure>
+      <div class="shot" style="--W:560;--H:610">
+        <img src="img/05a-strategy-text.webp" alt="План монтажа: текст стратегии, который можно править, и отметка «черновик, ворота закрыты»" width="560" height="610" loading="lazy">
+        <span class="area r" data-n="1" style="--x:167;--y:56;--w:154;--h:22"></span>
+        <span class="area" data-n="2" style="--x:24;--y:84;--w:503;--h:154"></span>
+        <span class="area" data-n="3" style="--x:22;--y:244;--w:516;--h:360"></span>
+      </div>
+    </figure>
+    <figure>
+      <div class="shot" style="--W:560;--H:610">
+        <img src="img/05b-strategy-questions.webp" alt="Вопросы агента с вариантами ответа и кнопки «Утвердить стратегию» и «Переписать с учётом правок»" width="560" height="610" loading="lazy">
+        <span class="area" data-n="4" style="--x:24;--y:230;--w:503;--h:285"></span>
+        <span class="area b" data-n="5" style="--x:24;--y:521;--w:154;--h:32"></span>
+        <span class="area r b" data-n="6" style="--x:180;--y:521;--w:196;--h:32"></span>
+      </div>
+    </figure>
+  </div>
+  <ol class="legend">
+    <li data-n="1"><span><b>«Ворота закрыты»</b> — пока вы не утвердите план, ничего не режется</span></li>
+    <li data-n="2"><span>Текст плана можно <b>исправить прямо здесь</b></span></li>
+    <li data-n="3"><span>Длина, части ролика, какие дубли взяты и почему, оговорки, которые агент обойдёт</span></li>
+    <li data-n="4"><span><b>Вопросы агента:</b> нажмите вариант, он добавится в правки</span></li>
+    <li data-n="5"><span><b>«Утвердить стратегию»</b> — сразу начнётся сборка черновика</span></li>
+    <li data-n="6"><span><b>«Переписать с учётом правок»</b> — агент сделает новую версию</span></li>
+  </ol>
+  <p class="note">Пункты «Нужно от вас» — то, что агент не будет выдумывать: шрифт и цвета бренда, музыку, подписи спикеров, проверку цифр. Ответьте на них в правках или передайте ответственному.</p>
+</section>
+
+<!-- STEP 6 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>6</b></span><span class="cell">Черновик<b>и камеры</b></span></div>
+  <div class="col"><p>После утверждения агент-монтажёр выбирает лучшие дубли и собирает их по частям ролика. Плеер переключается в режим <b>«Итог»</b>: смотреть можно сразу, без рендера. Любая правка видна мгновенно и сохраняется версией, поэтому ошибиться не страшно.</p>
+  <p>Собрать монтаж можно и руками: выделите несколько файлов в списке слева (<kbd>Ctrl</kbd>+клик или <kbd>Shift</kbd>+клик) и перетащите их на таймлайн — встанут подряд в месте, куда отпустили. Файлы из Проводника тоже можно бросать прямо на таймлайн.</p></div>
+  <div class="diagram" role="img" aria-label="Схема: рез всегда проходит между словами, в паузе, с небольшим запасом">
+    <svg viewBox="0 0 900 170" xmlns="http://www.w3.org/2000/svg">
+      <text x="0" y="20" class="cap">Как Cutroom режет речь</text>
+      <g font-size="15">
+        <rect x="0" y="40" width="96" height="40" rx="6" fill="var(--accent-soft)" stroke="var(--line)"/><text x="14" y="66">Итак,</text>
+        <rect x="104" y="40" width="118" height="40" rx="6" fill="var(--accent-soft)" stroke="var(--line)"/><text x="118" y="66">коллеги,</text>
+        <rect x="230" y="40" width="70" height="40" rx="6" fill="none" stroke="var(--warn)" stroke-dasharray="4 3"/><text x="244" y="66" fill="var(--warn)">э-э</text>
+        <rect x="308" y="40" width="150" height="40" rx="6" fill="none" stroke="var(--line)" stroke-dasharray="2 4"/><text x="336" y="66" class="cap">пауза 0,8 с</text>
+        <rect x="466" y="40" width="96" height="40" rx="6" fill="var(--accent-soft)" stroke="var(--line)"/><text x="480" y="66">рынок</text>
+        <rect x="570" y="40" width="160" height="40" rx="6" fill="var(--accent-soft)" stroke="var(--line)"/><text x="584" y="66">производителей</text>
+      </g>
+      <rect x="222" y="34" width="10" height="52" fill="var(--accent)" opacity=".25"/>
+      <line x1="232" y1="28" x2="232" y2="94" stroke="var(--accent)" stroke-width="2.5"/>
+      <rect x="456" y="34" width="10" height="52" fill="var(--accent)" opacity=".25"/>
+      <line x1="456" y1="28" x2="456" y2="94" stroke="var(--accent)" stroke-width="2.5"/>
+      <text x="236" y="114" font-size="13" fill="var(--accent)">вырезано: «э-э» и пауза</text>
+      <text x="0" y="146" font-size="14">Рез никогда не попадает внутрь слова. У каждого края остаётся запас 0,1 секунды, чтобы не съесть начало звука.</text>
+      <text x="0" y="166" class="cap">Поэтому на площадке полезны короткие паузы между фразами — по ним режется чище.</text>
+    </svg>
+  </div>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/09-angles-strip.webp" alt="Режим Итог: под плеером лента камер дубля с живыми миниатюрами, у каждой камеры свой цвет; на таймлайне фрагменты подчёркнуты цветом своей камеры" width="1440" height="900" loading="lazy">
+      <span class="area" data-n="1" style="--x:333;--y:45;--w:46;--h:25"></span>
+      <span class="area r" data-n="2" style="--x:906;--y:82;--w:148;--h:28"></span>
+      <span class="area" data-n="3" style="--x:426;--y:418;--w:152;--h:87"></span>
+      <span class="area" data-n="4" style="--x:582;--y:418;--w:152;--h:87"></span>
+      <span class="area" data-n="5" style="--x:44;--y:744;--w:1380;--h:38"></span>
+      <span class="area r" data-n="6" style="--x:1197;--y:652;--w:154;--h:26"></span>
+      <span class="area r" data-n="7" style="--x:1073;--y:338;--w:345;--h:50"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span><b>«Итог»</b> — смотреть монтаж сразу, без рендера</span></li>
+      <li data-n="2"><span><b>«Проверенный рендер»</b> — тот же монтаж готовым файлом, собирается в фоне</span></li>
+      <li data-n="3"><span><b>Камеры дубля:</b> живые миниатюры того же момента. Подписанная «в кадре» — та, что сейчас в монтаже</span></li>
+      <li data-n="4"><span><b>Клик по камере</b> — поставить её на весь выбранный эпизод. <kbd>Shift</kbd>+клик — только с места бегунка (рез встанет в ближайшую паузу). Погашенная камера в этот момент не снимала</span></li>
+      <li data-n="5"><span>Цветная полоска у фрагмента = <b>камера</b> того же цвета. Смена ракурса видна сразу</span></li>
+      <li data-n="6"><span><b>«Отменить» / «Вернуть»</b> — каждая правка сохранена версией</span></li>
+      <li data-n="7"><span><b>«Что думает агент»</b> — почему взят каждый фрагмент</span></li>
+    </ol>
+  </figure>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Хочу</th><th>Делаю</th></tr></thead>
+      <tbody>
+        <tr><td>Другая камера на весь эпизод</td><td>Клик по её миниатюре, клавиша <kbd>A</kbd> (следующая камера) или <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd></td></tr>
+        <tr><td>Другая камера только с этого места</td><td><kbd>Shift</kbd>+клик по миниатюре</td></tr>
+        <tr><td>Собрать монтаж из своих файлов</td><td>Выделите файлы слева и перетащите на таймлайн</td></tr>
+        <tr><td>Подрезать начало или конец</td><td>Тяните край фрагмента на таймлайне — он встанет между словами</td></tr>
+        <tr><td>Разрезать или удалить</td><td><kbd>S</kbd> — разрезать в точке плеера, <kbd>X</kbd> — удалить выбранный фрагмент</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Ручные правки — камера, цвет, удаление — относятся к <b>выбранному эпизоду</b>, а не к тому месту, где стоит бегунок. Над таймлайном видно, куда пойдёт правка: «правки → эпизод 3». Ничего не выбрано — правка пойдёт в эпизод под бегунком.</p>
+</section>
+
+<!-- STEP 7 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>7</b></span><span class="cell">Маркеры и<b>правка фрагмента</b></span></div>
+  <div class="col"><p>Смотрите черновик и нажимайте <b>M</b> там, где что-то не так: появится маркер, к нему можно написать, что исправить. Маркер привязан к записи и не потеряется, даже если монтаж перестроится. Чтобы попросить агента переделать только часть ролика, выделите её на таймлайне: клик по фрагменту, затем <kbd>Shift</kbd>+клик по последнему.</p></div>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/11-fragment.webp" alt="Слева вкладка Маркеры с заметками и кнопкой «Попросить агента исправить здесь»; на линейке таймлайна жёлтые флажки; выделены фрагменты 4–6, над таймлайном поле запроса и готовые просьбы" width="1440" height="900" loading="lazy">
+      <span class="area r" data-n="1" style="--x:226;--y:40;--w:102;--h:32"></span>
+      <span class="area" data-n="2" style="--x:4;--y:118;--w:312;--h:94"></span>
+      <span class="area" data-n="3" style="--x:540;--y:717;--w:70;--h:22"></span>
+      <span class="area b" data-n="4" style="--x:550;--y:744;--w:875;--h:38"></span>
+      <span class="area" data-n="5" style="--x:205;--y:683;--w:425;--h:32"></span>
+      <span class="area r" data-n="6" style="--x:634;--y:685;--w:757;--h:28"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span>Вкладка <b>«Маркеры»</b> — все заметки по монтажу, число открытых</span></li>
+      <li data-n="2"><span>Заметка к маркеру и кнопка <b>«Попросить агента исправить здесь»</b></span></li>
+      <li data-n="3"><span><b>Флажки</b> маркеров на линейке. Клик — перейти и открыть заметку</span></li>
+      <li data-n="4"><span><b>Выделенные фрагменты</b> (клик, потом <kbd>Shift</kbd>+клик)</span></li>
+      <li data-n="5"><span>Напишите, что изменить <b>только здесь</b>, и нажмите «Агенту». Заметки маркеров внутри выделения уйдут вместе с запросом</span></li>
+      <li data-n="6"><span><b>Готовые просьбы</b> в один клик: короче, другой дубль, убрать паузы…</span></li>
+    </ol>
+  </figure>
+  <p class="note">Агент меняет только выделенный кусок, остальной монтаж не трогает. Обычно ответ приходит за полминуты. Не понравилось — <kbd>Ctrl</kbd>+<kbd>Z</kbd>.</p>
+</section>
+
+<!-- STEP 8 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>8</b></span><span class="cell">Звук<b>и музыка</b></span></div>
+  <div class="col"><p>Вкладка <b>«Звук»</b> справа. Если на съёмке писали петличку или рекордер, положите его файл в ту же папку: Cutroom сам найдёт его по звуку и поставит в монтаж вместо микрофонов камер. Губы и голос совпадут точнее кадра.</p></div>
+  <div class="pair">
+    <figure>
+      <div class="shot" style="--W:560;--H:610">
+        <img src="img/12-audio-a.webp" alt="Вкладка Звук: выбор микрофона для дубля (выбрана петличка ZOOM_0001), шумоподавление, компрессия, смягчение свиста, срез гула, кнопка «Прослушать 10 с: до / после»" width="560" height="610" loading="lazy">
+        <span class="area" data-n="1" style="--x:3;--y:35;--w:545;--h:153"></span>
+        <span class="area" data-n="2" style="--x:3;--y:192;--w:545;--h:146"></span>
+        <span class="area" data-n="3" style="--x:11;--y:346;--w:202;--h:28"></span>
+        <span class="area" data-n="4" style="--x:11;--y:470;--w:529;--h:132"></span>
+      </div>
+    </figure>
+    <figure>
+      <div class="shot" style="--W:560;--H:610">
+        <img src="img/12-audio-b.webp" alt="Музыкальная полка: кнопка «Обновить полку», список подходящих треков с темпом, длиной, энергией, библиотекой и объяснением, кнопки «В монтаж»" width="560" height="610" loading="lazy">
+        <span class="area" data-n="5" style="--x:11;--y:146;--w:134;--h:28"></span>
+        <span class="area" data-n="6" style="--x:11;--y:200;--w:529;--h:100"></span>
+        <span class="area r" data-n="7" style="--x:452;--y:450;--w:80;--h:30"></span>
+      </div>
+    </figure>
+  </div>
+  <ol class="legend">
+    <li data-n="1"><span><b>Микрофон дубля.</b> Петличка выбирается сама; можно взять звук любой камеры</span></li>
+    <li data-n="2"><span><b>Обработка речи:</b> шумоподавление, выравнивание громкости, смягчение «с/ш», срез гула</span></li>
+    <li data-n="3"><span><b>«Прослушать 10 с: до / после»</b> — сравнить на слух, переключая «до» и «после»</span></li>
+    <li data-n="4"><span><b>Музыка в монтаже:</b> громкость и насколько тише она звучит под речью</span></li>
+    <li data-n="5"><span><b>«Обновить полку»</b> — Cutroom послушает треки в папке музыки</span></li>
+    <li data-n="6"><span>Треки, подходящие к ролику, с объяснением: темп, длина, не спорит ли с речью</span></li>
+    <li data-n="7"><span><b>«В монтаж»</b> — трек сразу звучит в «Итоге» и приглушается, когда говорят</span></li>
+  </ol>
+  <p class="note">Музыку Cutroom сам не скачивает. Скачайте треки с разрешённых сайтов (Mixkit, Pixabay Music, YouTube Audio Library, Free Music Archive, Uppbeat; ссылки и условия — внизу вкладки) и положите их в папку музыки. Трек без указанной библиотеки помечается «источник не указан»: до финала уточните, откуда он.</p>
+</section>
+
+<!-- STEP 9 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>9</b></span><span class="cell">Цвет</span></div>
+  <div class="col"><p>Вкладка <b>«Цвет»</b> справа. Выберите эпизод на таймлайне и нажмите готовую настройку или подвиньте ползунки — цвет поменяется только у него. Чтобы задать цвет всему ролику, нажмите «Ко всему ролику». Свой цвет эпизода всегда важнее общего.</p></div>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/17-color.webp" alt="Вкладка Цвет для эпизода 2 с настройкой «тёплое кино»; в плеере режим «До / после»: слева кадр без цвета, справа с цветом, между ними линия-шторка; на таймлайне выделен эпизод 2, над ним надпись «правки → эпизод 2»" width="1440" height="900" loading="lazy">
+        <span class="area" data-n="1" style="--x:1170;--y:96;--w:62;--h:22"></span>
+        <span class="area r" data-n="2" style="--x:1316;--y:96;--w:110;--h:22"></span>
+        <span class="area" data-n="3" style="--x:1130;--y:125;--w:246;--h:56"></span>
+        <span class="area" data-n="4" style="--x:1130;--y:202;--w:304;--h:124"></span>
+        <span class="area" data-n="5" style="--x:504;--y:45;--w:74;--h:24"></span>
+        <span class="area" data-n="6" style="--x:302;--y:78;--w:816;--h:344"></span>
+        <span class="area b" data-n="7" style="--x:240;--y:756;--w:202;--h:36"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span>К чему применится цвет: <b>выбранный эпизод</b></span></li>
+      <li data-n="2"><span><b>«Ко всему ролику»</b> — общий цвет для всех эпизодов</span></li>
+      <li data-n="3"><span><b>Готовые настройки:</b> лёгкая чистка, плотнее, тёплое кино</span></li>
+      <li data-n="4"><span>Ползунки: экспозиция, тени, средние тона, насыщенность, температура</span></li>
+      <li data-n="5"><span><b>«До / после»</b> — сравнить точный кадр</span></li>
+      <li data-n="6"><span>Тяните шторку мышью: слева как снято, справа с цветом</span></li>
+      <li data-n="7"><span>Выбранный эпизод на таймлайне</span></li>
+    </ol>
+  </figure>
+  <p class="note">В «Итоге» цвет показан приблизительно, чтобы плеер не тормозил. Точно — в режиме «До / после» и в готовом рендере.</p>
+</section>
+
+<!-- STEP 10 -->
+<section>
+  <div class="slate"><span class="stripes"></span><span class="cell">Шаг<b>10</b></span><span class="cell">Инфографика</span></div>
+  <div class="col"><p>Места под инфографику агент-монтажёр отмечает сам — это плашки на дорожке <b>I</b> таймлайна. Добавить своё место можно двойным щелчком по дорожке. Во вкладке <b>«Инфографика»</b> нажмите «Построить все»: каждую карточку строит отдельный агент, все одновременно, примерно за полминуты. Цифры агент берёт только из слов спикера и не придумывает.</p></div>
+  <figure>
+    <div class="shot" style="--W:1440;--H:900">
+      <img src="img/16-gfx.webp" alt="Вкладка Инфографика: стиль карточек (цвета и шрифт), кнопка «Построить все», выбор типа и «В бегунок», карточка-титр с картинкой; в плеере поверх кадра карточка «Три шага» со списком; на дорожке I таймлайна оранжевые плашки карточек" width="1440" height="900" loading="lazy">
+        <span class="area" data-n="1" style="--x:1128;--y:90;--w:296;--h:124"></span>
+        <span class="area r" data-n="2" style="--x:1296;--y:237;--w:124;--h:28"></span>
+        <span class="area" data-n="3" style="--x:1130;--y:270;--w:292;--h:32"></span>
+        <span class="area" data-n="4" style="--x:1128;--y:378;--w:294;--h:272"></span>
+        <span class="area r" data-n="5" style="--x:746;--y:112;--w:252;--h:276"></span>
+        <span class="area b" data-n="6" style="--x:44;--y:818;--w:1104;--h:28"></span>
+    </div>
+    <ol class="legend">
+      <li data-n="1"><span><b>Стиль карточек:</b> цвета и шрифт. Пока фирменные цвета не заданы, горит подсказка «цвета бренда»</span></li>
+      <li data-n="2"><span><b>«Построить все»</b> — агенты строят все карточки разом</span></li>
+      <li data-n="3"><span>Тип новой карточки (число, столбцы, доли, список, было → стало, линия по годам, титр) и <b>«В бегунок»</b></span></li>
+      <li data-n="4"><span>Готовая карточка: <b>«Перестроить»</b>, «Проще», «Короче», «Длиннее». Под стрелкой можно поправить текст руками</span></li>
+      <li data-n="5"><span>Карточка видна в «Итоге» сразу, поверх кадра</span></li>
+      <li data-n="6"><span><b>Дорожка I.</b> Плашку можно двигать, тянуть за край — длиннее или короче. Оранжевая — готово</span></li>
+    </ol>
+  </figure>
+  <p class="note">Перед утверждением напишите в задаче, где нужна графика: «инфографика на цифрах рынка». Агент поставит места сам, а карточки повторят цвета и шрифт, выбранные в «Стиле карточек».</p>
+</section>
+
+<section>
+  <h2>Клавиши, которые стоит запомнить</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Клавиша</th><th>Что делает</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Пробел</kbd></td><td>Играть / пауза</td></tr>
+        <tr><td><kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></td><td>Назад / стоп / вперёд (нажмите <kbd>L</kbd> ещё раз — быстрее)</td></tr>
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>На кадр назад / вперёд, с <kbd>Shift</kbd> — на 10 кадров</td></tr>
+        <tr><td><kbd>M</kbd></td><td>Поставить маркер в точке плеера и написать заметку</td></tr>
+        <tr><td><kbd>A</kbd> / <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd></td><td>Следующая камера / камера по номеру с этого места (в «Итоге»)</td></tr>
+        <tr><td><kbd>Shift</kbd>+клик</td><td>Выделить несколько фрагментов подряд, чтобы попросить агента</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Снять выделение</td></tr>
+        <tr><td><kbd>S</kbd></td><td>Разрезать фрагмент в точке плеера (только в «Итоге»)</td></tr>
+        <tr><td><kbd>X</kbd></td><td>Удалить выбранный фрагмент</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Отменить / вернуть правку</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Предложить стратегию</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Поиск команд</td></tr>
+        <tr><td><kbd>`</kbd></td><td>Открыть или закрыть очередь</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Как снимать, чтобы монтаж собрался сам</h2>
+  <div class="pair">
+    <div>
+      <h3 style="margin-bottom:10px">На площадке</h3>
+      <ul class="do">
+        <li><b>Включайте звук на всех камерах</b>, даже если пишете петличку. По звуку камеры и петличка находят друг друга.</li>
+        <li>Файл петлички или рекордера кладите <b>в ту же папку</b>, что и видео. Включайте рекордер до камер и не выключайте между дублями — так он сведётся со всеми.</li>
+        <li>Хлопок в начале дубля ускоряет сведение, но он не обязателен.</li>
+        <li>Между фразами — <b>пауза полсекунды</b>. По паузам режется чище всего.</li>
+        <li>Сбились — <b>повторите фразу целиком</b>, а не с середины слова.</li>
+        <li>Не говорите поверх спикера. Реплики с площадки агент вырежет, а наложение голосов — нет.</li>
+        <li>Удачный дубль отметьте вслух («этот берём»): агент читает текст и учтёт это.</li>
+      </ul>
+    </div>
+    <div>
+      <h3 style="margin-bottom:10px">В сценарии и задаче</h3>
+      <ul class="do">
+        <li>Пишите текст <b>блоками с одной мыслью</b>: так агенту проще собрать короткую версию.</li>
+        <li>В задаче называйте <b>зрителя, длину и формат</b>: «дилеры, 3 минуты, 16:9».</li>
+        <li>Перечислите, что <b>обязательно оставить</b> и что <b>убрать</b>.</li>
+        <li>Цифры в графике агент берёт только из речи спикера. Проверьте их до утверждения.</li>
+        <li>Шрифт, цвета и музыку агент не придумывает: подготовьте их заранее.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Если что-то пошло не так</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Что видите</th><th>Что делать</th></tr></thead>
+      <tbody>
+        <tr><td>«Прокси ещё готовится»</td><td>Подождите: файл стоит в очереди. Сколько осталось, видно в очереди.</td></tr>
+        <tr><td>В шапке жёлтое «Войти в Claude»</td><td>Нажмите его, войдите в аккаунт Claude в открывшемся браузере. Индикатор станет зелёным сам, затем нажмите «Повторить» у остановившейся задачи.</td></tr>
+        <tr><td>В шапке красное «Claude не найден»</td><td>На компьютере нет приложения Claude для рабочего стола или оно не запускалось ни разу. Установите и откройте его один раз, потом перезапустите Cutroom.</td></tr>
+        <tr><td>Ярлык Cutroom не запускается</td><td>Появится окно с причиной. Чаще всего папку Cutroom переместили: ярлык ждёт её в <span class="mono">D:\Video\cutroom</span>. Сообщите ответственному.</td></tr>
+        <tr><td>Камера попала в «Без пары»</td><td>У неё не было звука, или она снимала в другое время. Её можно использовать как отдельный кадр.</td></tr>
+        <tr><td>У ракурса стоит «проверить»</td><td>Откройте «Ракурсы» и сравните губы и руки. Если видно расхождение, сдвиньте камеру кнопками −1 / +1.</td></tr>
+        <tr><td>План не нравится</td><td>«Переписать с учётом правок» и пара фраз, что поменять. Старая версия не теряется.</td></tr>
+        <tr><td>Петличка не подставилась</td><td>Сведите ракурсы заново («Пересинхронизировать»). Если рекордер писал отдельно от всех камер по времени, пары не будет — выберите микрофон вручную во вкладке «Звук».</td></tr>
+        <tr><td>Агент поправил не то</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>, затем уточните просьбу: что именно оставить или убрать.</td></tr>
+        <tr><td>Испортили монтаж правкой</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> или «Отменить» над таймлайном.</td></tr>
+        <tr><td>Рендер пишет, что файла нет</td><td>Исходник переложили в другую папку. Cutroom сам ищет его по имени и размеру внутри папки проекта. Если не нашёл — верните файл или положите его в папку проекта, затем снова нажмите «Проверенный рендер».</td></tr>
+        <tr><td>У карточки «прервано»</td><td>Программу закрыли, пока агент строил карточку. Нажмите «Перестроить».</td></tr>
+        <tr><td>В карточке не та цифра</td><td>Раскройте «текст карточки» и поправьте руками, или «Перестроить» с уточнением в задаче. Агент берёт цифры только из речи: если спикер их не называл, он поставит список или титр.</td></tr>
+        <tr><td>Красная строка в очереди</td><td>Под задачей написано, что случилось. Нажмите «Повторить»; если не помогло, пришлите текст ошибки.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Что ещё в работе</h2>
+  <div class="soon-list">
+    <div><b>Огрехи</b>Автопоиск обрезанных фраз, тишины и пустых кадров на стыках</div>
+    <div><b>Финал</b>Рендер в исходном качестве и субтитры</div>
+    <div><b>Звук в превью</b>Шумоподавление и компрессия пока слышны только в пробнике «до/после» и в рендере</div>
+  </div>
+</section>
+
+<footer>Cutroom · памятка для команды. Скриншоты сняты с реальных проектов 5–6 ноября 2026 года; кнопки и подписи могут немного меняться по мере доработки.</footer>
+
+</div>

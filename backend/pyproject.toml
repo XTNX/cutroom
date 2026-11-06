@@ -1,0 +1,62 @@
+[project]
+name = "cutroom-backend"
+version = "0.1.0"
+description = "Cutroom backend: FastAPI job queue over video-use helpers + ffmpeg"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "numpy",
+    "scipy",
+    "faster-whisper",
+    "huggingface-hub",
+    # video-use helper deps (pack_transcripts, timeline_view, grade, render)
+    "librosa",
+    "matplotlib",
+    "pillow",
+    "psutil",
+]
+
+# The first-run setup of Cutroom.exe picks extras by hardware:
+#   NVIDIA GPU:   --extra cuda --extra gigaam-cuda
+#   no NVIDIA:    --extra gigaam-cpu
+[project.optional-dependencies]
+cuda = [   # cuBLAS / cuDNN for faster-whisper (ctranslate2) on the GPU
+    "nvidia-cublas-cu12==12.8.4.1; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32'",
+]
+gigaam-cuda = [
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+    "gigaam @ git+https://github.com/salute-developers/GigaAM@7447938d791c4f3e643386ee22c33777004293a5",
+]
+gigaam-cpu = [
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+    "gigaam @ git+https://github.com/salute-developers/GigaAM@7447938d791c4f3e643386ee22c33777004293a5",
+]
+
+[tool.uv]
+package = false
+conflicts = [[{ extra = "gigaam-cuda" }, { extra = "gigaam-cpu" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", extra = "gigaam-cuda" },
+    { index = "pytorch-cpu", extra = "gigaam-cpu" },
+]
+torchaudio = [
+    { index = "pytorch-cu128", extra = "gigaam-cuda" },
+    { index = "pytorch-cpu", extra = "gigaam-cpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

@@ -1,0 +1,72 @@
+{
+  "name": "cutroom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cutroom — графическая студия монтажа поверх video-use + ffmpeg",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c blue,magenta \"vite\" \"wait-on tcp:127.0.0.1:5173 && electron .\"",
+    "dev:web": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit",
+    "start": "electron .",
+    "dist": "node scripts/write-home.cjs && vite build && electron-builder --win dir",
+    "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-shortcut.ps1",
+    "package": "node scripts/package.cjs"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "concurrently": "10.0.6",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "tailwindcss": "4.3.4",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "wait-on": "9.5.1"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@radix-ui/react-dialog": "1.3.1",
+    "@radix-ui/react-tabs": "1.2.1",
+    "@radix-ui/react-tooltip": "1.4.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zustand": "5.0.16"
+  },
+  "build": {
+    "appId": "local.cutroom.app",
+    "productName": "Cutroom",
+    "copyright": "Cutroom",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "electron/**",
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/cutroom-home.txt",
+        "to": "cutroom-home.txt"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": "dir",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    }
+  }
+}

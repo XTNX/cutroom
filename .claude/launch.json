@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "cutroom-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "D:/Video/cutroom", "run", "dev:web"], "port": 5173 }
+  ]
+}
