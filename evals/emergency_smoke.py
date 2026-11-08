@@ -3,7 +3,8 @@
 Checks: model routing; a usage-limit answer → one fallback step → AgentQuotaError + status flag;
 colour / sound requests by script (no model); the preset stills do not overwrite each other when
 asked for at once; the emergency export (1080p from blocks, unfinished card listed as skipped);
-the knowledge-base notes written by script after the export; the KB re-read at project start.
+an unfinished project stays out of the knowledge base; «Завершить проект» on a current final
+export writes the notes and makes the reference; the KB re-read at project start.
 
 Usage:  backend/.venv/Scripts/python evals/emergency_smoke.py <empty scratch dir>
 Needs ffmpeg/ffprobe on PATH. Sets APPDATA/HOME inside the scratch dir (settings, vault, skills).
@@ -152,14 +153,38 @@ def main() -> None:
     check(f.exists() and abs(dur - 7.0) < 0.15 and h == "1080", f"экстренный экспорт: {f.name}, {dur:.2f} с, {h}p")
     check(any("цифры" in s for s in st["skipped"]) and f.with_suffix(".txt").exists(), "неготовая карточка в списке «не вошло»")
 
-    # knowledge base: notes by script, index, re-read at project start
+    # knowledge base: an unfinished project reaches neither the vault nor the references
     kbd = VAULT / "Cutroom"
-    notes = list((kbd / "Рендеры").glob("*экстренный*.md"))
-    check(bool(notes) and (kbd / "Проекты" / "Проект.md").exists() and (kbd / "Индекс ассетов.md").exists(), "заметка рендера, проекта и индекс ассетов")
-    kb.render_note(p, {**st, "version": 99, "emergency": False}, "quick")
+    rnotes = lambda: list((kbd / "Рендеры").glob("*.md")) if (kbd / "Рендеры").exists() else []  # noqa: E731
+    kb.index_graphic(p, "o1", {"type": "number", "title": "цифры"}, "cream", {"poster": "x.png"})
+    check(not rnotes() and not kb.items("graphic"), "незавершённый проект: экстренный экспорт и графика не в базе знаний")
     info = kb.project_start(p)
-    check(info["renders"] >= 2 and info["rules"] == 1 and info["skills"] == ["obsidian-markdown"], f"старт проекта: {info['renders']} рендера, правило, скилл")
-    check(isinstance(info["ref_grade"], dict), "цвет последнего рендера — пресет-референс")
+    check(info["renders"] == 0 and info["ref_grade"] is None and not info["finished"], "незавершённый проект: нет референсов")
+    try:
+        kb.finish(p)
+        check(False, "завершение без финального экспорта должно отказать")
+    except RuntimeError as e:
+        check("экстренный" in str(e), f"после экстренного экспорта «Завершить проект» недоступно: {str(e)[:60]}")
+    from cutroom.quick import build
+    build.run_sync(p, "final", log=lambda m: None)
+    check(not rnotes(), "обычный финальный экспорт сам по себе в базу знаний не пишет")
+    d2 = model.current(p)
+    d2["tracks"]["video"][0]["color"] = {"temperature": 5}
+    model.save(p, d2, "eval", "правка после экспорта")
+    try:
+        kb.finish(p)
+        check(False, "устаревший экспорт должен отказать")
+    except RuntimeError as e:
+        check("менялся" in str(e), "после правок нужен новый экспорт: устаревший не становится итогом")
+    build.run_sync(p, "final", log=lambda m: None)
+    res = kb.finish(p)
+    check(len(rnotes()) == 1 and (kbd / "Проекты" / "Проект.md").exists() and res["assets"] == 1 and len(kb.items("graphic")) == 1,
+          "«Завершить проект»: заметка рендера, проекта, графика перенесена в индекс")
+    check(not kb.project_state(p)["can_finish"], "повторно тот же итог не записывается")
+    info = kb.project_start(p)
+    check(info["renders"] == 1 and info["finished"] and info["rules"] == 1 and info["skills"] == ["obsidian-markdown"],
+          f"старт проекта: {info['renders']} финальный рендер, правило, скилл")
+    check(isinstance(info["ref_grade"], dict), "цвет финального рендера — пресет-референс")
     check("Начинать с фронта" in kb.agent_context(), "правило из базы знаний попадает агентам")
     q.shutdown()
     print(f"\n{'все проверки пройдены' if not fails else f'{fails} проверок не прошло'}")

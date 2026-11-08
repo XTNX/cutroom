@@ -10,12 +10,18 @@ The vault stays the source of truth (see brand.py); Cutroom keeps its own folder
 
 The machine-readable index lives in %APPDATA%/Cutroom/asset_index.json.
 
-After each final render: the script writes/updates the notes first (works without tokens), then —
-if settings["kb_agent_notes"] — a Haiku call with the Obsidian skills installed for Claude Code
-(~/.claude/skills, plugins) edits the notes: lessons, practices, links. Its failure changes nothing.
+Only FINISHED projects reach the knowledge base. A project is finished when the person presses
+«Завершить проект» on its latest final (1080p) export, made from the current version of the cut.
+Until then nothing of the project — its renders, its presentations, the graphics drawn for it —
+goes to the vault or to the index, and nothing of it becomes a reference: assets wait in
+edit/kb_pending.json, emergency and draft exports never count. On «Завершить проект» the script
+writes the render note (`final: true`) and the project note and moves the waiting assets into the
+index (works without tokens), then — if settings["kb_agent_notes"] — a Haiku call with the
+Obsidian skills installed for Claude Code (~/.claude/skills, plugins) edits the notes: lessons,
+practices, links. Its failure changes nothing.
 
 When a project opens: the knowledge base is re-read — practices, the project's note, the latest
-renders (this project's first) and the skills the notes ask for (`cutroom-skills:` in the
+final renders of finished projects (this project's first) and the skills the notes ask for (`cutroom-skills:` in the
 frontmatter or a ```cutroom-skills``` block). That text goes to the creative agents as reference
 (agent.KB_ROLES), and the grade of the last render becomes the preset «Как в прошлом рендере».
 """
@@ -145,17 +151,66 @@ def index_brandbook() -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------- project state: finished or not
+
+
+def _state_path(project) -> Path:
+    return project.edit / "kb_state.json"
+
+
+def _pending_path(project) -> Path:
+    return project.edit / "kb_pending.json"
+
+
+def _read(path: Path, default: dict) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def project_state(project) -> dict:
+    """{finished, version, when, file} + whether «Завершить проект» is possible right now and why not."""
+    st = _read(_state_path(project), {"finished": False})
+    fin, why = _finish_ready(project)
+    if fin and st.get("finished") and st.get("version") == fin.get("version"):
+        fin, why = None, f"Итог v{st.get('version')} уже в базе знаний."
+    pend = _read(_pending_path(project), {"assets": {}})
+    return {**st, "can_finish": fin is not None, "why_not": why, "pending_assets": len(pend.get("assets") or {})}
+
+
+def _finish_ready(project) -> tuple[dict | None, str | None]:
+    """The final export «Завершить проект» would record, or why there is none."""
+    from .quick import build, model
+    fin = build.last(project, "final")
+    if not fin or not fin.get("file") or not Path(fin["file"]).is_file():
+        return None, "Нет финального экспорта 1080p (шаг 4 → «Экспорт 1080p»). Экстренный экспорт и превью референсами не становятся."
+    if fin.get("emergency"):
+        return None, "Последний 1080p — экстренный экспорт: итогом проекта он не становится. Сделайте «Экспорт 1080p»."
+    if fin.get("version") != model.head(project):
+        return None, f"После экспорта v{fin.get('version')} монтаж менялся — сначала экспортируйте текущую версию."
+    return fin, None
+
+
+def _stash(project, kind: str, key: str, title: str, path: str | None, meta: dict) -> dict:
+    """An asset of a project that is not finished yet: kept in the project, not in the index."""
+    pend = _read(_pending_path(project), {"assets": {}})
+    item = {"kind": kind, "key": key, "title": title, "path": path, "project": project.dir.name, "meta": meta}
+    pend.setdefault("assets", {})[f"{kind}:{key}"] = item
+    _pending_path(project).write_text(json.dumps(pend, ensure_ascii=False, indent=1), encoding="utf-8")
+    return item
+
+
 def index_presentation(project, pres: dict) -> dict:
     pages = pres.get("pages") or []
-    return index_put("presentation", pres["file"], pres.get("name") or Path(pres["file"]).name, pres["file"], project.dir.name,
-                     {"pages": len(pages), "texts": [(p.get("text") or "")[:160] for p in pages[:30]], "dir": pres.get("dir")})
+    return _stash(project, "presentation", pres["file"], pres.get("name") or Path(pres["file"]).name, pres["file"],
+                  {"pages": len(pages), "texts": [(p.get("text") or "")[:160] for p in pages[:30]], "dir": pres.get("dir")})
 
 
 def index_graphic(project, gid: str, spec: dict, style: str, files: dict, mode: str = "quick") -> dict:
-    return index_put("graphic", f"{project.dir}:{mode}:{gid}", (spec or {}).get("title") or gid, (files or {}).get("poster"),
-                     project.dir.name, {"type": (spec or {}).get("type"), "style": style, "mode": mode, "id": gid,
-                                        "items": len((spec or {}).get("items") or []), "render": (files or {}).get("render"),
-                                        "spec": spec})
+    return _stash(project, "graphic", f"{project.dir}:{mode}:{gid}", (spec or {}).get("title") or gid, (files or {}).get("poster"),
+                  {"type": (spec or {}).get("type"), "style": style, "mode": mode, "id": gid,
+                   "items": len((spec or {}).get("items") or []), "render": (files or {}).get("render"), "spec": spec})
 
 
 def write_index_note() -> Path | None:
@@ -292,7 +347,8 @@ def _full_facts(project) -> dict:
 
 
 def render_note(project, stats: dict, mode: str = "quick", emergency: bool = False) -> Path | None:
-    """The scripted part: a note for this render + the project note + the index. No model involved."""
+    """The scripted part of «Завершить проект»: the final render's note + the project note + the
+    index. No model involved. Called only from finish()."""
     from . import edl
     d = kb_dir()
     facts = _quick_facts(project) if mode == "quick" else _full_facts(project)
@@ -310,7 +366,7 @@ def render_note(project, stats: dict, mode: str = "quick", emergency: bool = Fal
     keep = ""
     if note.exists():   # what people and the notes agent wrote stays
         keep = _section(_fm(note.read_text(encoding="utf-8", errors="ignore"))[1], "Заметки")
-    fm = {"tags": ["cutroom/render"], "project": name, "version": ver, "date": when[:16], "mode": "быстрый" if mode == "quick" else "полный",
+    fm = {"tags": ["cutroom/render"], "final": True, "project": name, "version": ver, "date": when[:16], "mode": "быстрый" if mode == "quick" else "полный",
           "emergency": emergency, "duration_s": stats.get("duration"), "file": stats.get("file"),
           "grade": facts.get("grade"), "card_styles": meta["card_styles"]}
     roles = ", ".join(f"{k} {v:.0f} с" for k, v in (facts.get("per_role") or {}).items()) or "—"
@@ -322,7 +378,7 @@ def render_note(project, stats: dict, mode: str = "quick", emergency: bool = Fal
     body = [
         "---", yaml.safe_dump(fm, allow_unicode=True, sort_keys=False, default_flow_style=None).strip(), "---",
         f"# {title}", "",
-        f"Проект: {link(d / 'Проекты' / (safe_name(name) + '.md'))} · {when[:16]} · {'экстренный экспорт без ИИ' if emergency else 'финальный рендер'}", "",
+        f"Проект: {link(d / 'Проекты' / (safe_name(name) + '.md'))} · {when[:16]} · финальный рендер завершённого проекта", "",
         "## Задача", "", "> " + task.replace("\n", "\n> "), "",
         "## Итог", "",
         f"- Длительность: {_fmt(float(stats.get('duration') or 0))}, блоков картинки: {facts.get('blocks', 0)}",
@@ -346,7 +402,7 @@ def _project_note(d: Path, name: str, note: Path, ver, when: str, emergency: boo
     f = d / "Проекты" / f"{safe_name(name)}.md"
     line = f"- {when[:16]} — {link(note)}" + (" · экстренный" if emergency else "")
     if not f.exists():
-        f.write_text("\n".join(["---", "tags: [cutroom/project]", f"project: {json.dumps(name, ensure_ascii=False)}", "cutroom-skills: []", "---",
+        f.write_text("\n".join(["---", "tags: [cutroom/project]", f"project: {json.dumps(name, ensure_ascii=False)}", "status: завершён", "cutroom-skills: []", "---",
                                 f"# {name}", "", "## Рендеры", "", line, "", "## Уроки", "",
                                 "_Что учесть в этом проекте в следующий раз._", ""]), encoding="utf-8")
         return f
@@ -419,16 +475,25 @@ def notes_agent(project, note: Path, job=None) -> str:
     return msg.strip()[:200]
 
 
-def after_render(project, stats: dict, mode: str = "quick", emergency: bool = False, queue=None) -> Path | None:
-    """Final render done → notes (script, always) → optional agent pass (background, failure-tolerant)."""
+def finish(project, queue=None) -> dict:
+    """«Завершить проект»: the latest final export (of the current version) becomes the project's
+    result in the knowledge base — the only way anything of a project gets there."""
+    fin, why = _finish_ready(project)
+    if not fin:
+        raise RuntimeError(why)
+    note = render_note(project, fin, "quick")
+    pend = _read(_pending_path(project), {"assets": {}})
+    for it in (pend.get("assets") or {}).values():
+        index_put(it["kind"], it["key"], it["title"], it.get("path"), it.get("project"), it.get("meta"), note=False)
+    _pending_path(project).unlink(missing_ok=True)
     try:
-        note = render_note(project, stats, mode, emergency)
-    except Exception as e:  # noqa: BLE001 — the render itself is done; the note is best effort
-        if queue is None:
-            raise
-        print(f"kb: заметка рендера не записана: {e}", flush=True)
-        return None
-    if note and queue is not None and load_settings().get("kb_agent_notes", True) and not emergency:
+        write_index_note()
+    except OSError:
+        pass
+    st = {"finished": True, "version": fin.get("version"), "file": fin.get("file"), "note": str(note) if note else None,
+          "when": time.strftime("%Y-%m-%d %H:%M:%S")}
+    _state_path(project).write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+    if note and queue is not None and load_settings().get("kb_agent_notes", True):
         from .jobs import Job
 
         def run(job):
@@ -436,7 +501,7 @@ def after_render(project, stats: dict, mode: str = "quick", emergency: bool = Fa
 
         queue.add(Job(kind="kb-notes", label="База знаний: ИИ дополняет заметки (Haiku + скиллы Obsidian)", lane="agent",
                       priority=40, expected=60, fn=run))
-    return note
+    return {**st, "assets": len(pend.get("assets") or {})}
 
 
 # ---------------------------------------------------------------- project start: re-read the knowledge base
@@ -461,6 +526,7 @@ def project_start(project, job=None) -> dict:
     parts: list[str] = []
     want: list[str] = []
     info = {"vault": str(vault()) if vault() else None, "kb": str(d) if d else None, "notes": 0, "renders": 0, "rules": 0,
+            "finished": bool(_read(_state_path(project), {}).get("finished")),
             "skills": [], "skills_missing": [], "ref_grade": None, "ref_render": None, "obsidian_skills": [s["name"] for s in obsidian_skills()],
             "when": time.strftime("%Y-%m-%d %H:%M:%S")}
     if d:
@@ -476,13 +542,15 @@ def project_start(project, job=None) -> dict:
             want += _skills_of(fm, body)
             parts.append(f"## Этот проект ({name})\n" + body.strip()[:3000])
             info["notes"] += 1
-        renders = sorted((d / "Рендеры").glob("*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+        # references: only final renders of finished projects (notes written by finish())
+        renders = [f for f in sorted((d / "Рендеры").glob("*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+                   if (lambda fm: fm.get("final") is True and not fm.get("emergency"))(_fm(f.read_text(encoding="utf-8", errors="ignore"))[0])]
         mine = [f for f in renders if f.name.startswith(safe_name(name) + " — ")][:3]
         other = [f for f in renders if f not in mine][:3]
         info["renders"] = len(renders)
         for f in mine + other:
             fm, body = _fm(f.read_text(encoding="utf-8", errors="ignore"))
-            if info["ref_grade"] is None and fm.get("grade") and not fm.get("emergency"):
+            if info["ref_grade"] is None and fm.get("grade"):
                 info["ref_grade"], info["ref_render"] = fm["grade"], f.stem
             txt = (_section(body, "Итог") + "\n" + _section(body, "Заметки")).strip()
             parts.append(f"## Прошлый рендер: {f.stem}{' (этот проект)' if f in mine else ''}\n{txt[:1400]}")
@@ -542,7 +610,7 @@ def info() -> dict | None:
 
 
 def ref_preset() -> dict | None:
-    """The grade of the last (non-emergency) render as a colour preset."""
+    """The grade of the latest final render of a finished project as a colour preset."""
     i = info() or {}
     g = i.get("ref_grade")
     if not isinstance(g, dict):

@@ -3,7 +3,8 @@ the knowledge base. Everything a render needs is already decided in the project 
 
     python -m cutroom.cli prerender  D:/Video/бф [--profile draft|final]   render missing segments only
     python -m cutroom.cli build      D:/Video/бф                           draft preview (720p)
-    python -m cutroom.cli export     D:/Video/бф                           final 1080p + KB note
+    python -m cutroom.cli export     D:/Video/бф                           final 1080p (not in the KB yet)
+    python -m cutroom.cli finish     D:/Video/бф                           project finished: final render → KB note, reference
     python -m cutroom.cli emergency  D:/Video/бф                           export with fallbacks (see emergency.py)
     python -m cutroom.cli kb-start   D:/Video/бф                           re-read the knowledge base for a project
     python -m cutroom.cli kb-index                                         index the brand book, rewrite the asset index note
@@ -26,7 +27,7 @@ def _project(path: str):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cutroom.cli", description="Cutroom: скрипты без ИИ")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("prerender", "build", "export", "emergency", "kb-start"):
+    for name in ("prerender", "build", "export", "emergency", "kb-start", "finish"):
         s = sub.add_parser(name)
         s.add_argument("project")
         if name == "prerender":
@@ -67,9 +68,10 @@ def main(argv: list[str] | None = None) -> int:
             from .quick import build
             st = build.run_sync(p, "draft" if a.cmd == "build" else "final", workers=a.workers)
             print(st["file"])
-            if a.cmd == "export":
-                from . import kb
-                print("заметка:", kb.after_render(p, st, "quick") or "хранилище Obsidian не найдено (запись в индексе)")
+        elif a.cmd == "finish":
+            from . import kb
+            st = kb.finish(p)
+            print("проект завершён:", st.get("note") or "хранилище Obsidian не найдено (запись в индексе)")
         elif a.cmd == "emergency":
             from . import emergency
             st = emergency.export(p)

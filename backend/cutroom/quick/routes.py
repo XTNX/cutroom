@@ -499,15 +499,10 @@ def build_now():
 
 @router.post("/api/quick/export")
 def export():
-    from .. import kb
     p = proj()
     gate(p)
-
-    def done(st: dict):
-        bump()
-        kb.after_render(p, st, "quick", queue=S().queue)   # notes by script, then the notes agent (Haiku)
-
-    return build.schedule(p, S().queue, "final", 0, on_done=done).public()
+    # the export alone does not reach the knowledge base: «Завершить проект» does (kb.finish)
+    return build.schedule(p, S().queue, "final", 0, on_done=lambda st: bump()).public()
 
 
 @router.get("/api/quick/log")

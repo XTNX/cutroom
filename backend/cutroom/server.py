@@ -346,8 +346,21 @@ def emergency_last():
 @app.get("/api/kb")
 def kb_info():
     from . import kb
+    p = state["project"]
     return {"info": kb.info(), "obsidian_skills": kb.obsidian_skills(), "index": {k: len(kb.items(k)) for k in kb.KINDS},
-            "recent": kb.items()[:12]}
+            "recent": kb.items()[:12], "project": kb.project_state(p) if p else None}
+
+
+@app.post("/api/kb/finish")
+def kb_finish():
+    """«Завершить проект»: only now the project's final render becomes a note and a reference."""
+    from . import kb
+    try:
+        st = kb.finish(proj(), queue)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    state["sources_version"] += 1
+    return st
 
 
 @app.post("/api/kb/refresh")

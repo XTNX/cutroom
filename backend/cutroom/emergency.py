@@ -6,7 +6,8 @@ Nothing here calls a model. In order, the first that works:
   2. quick mode — a copy of the last assembled preview (720p) if the 1080p build fails;
   3. full mode — the verified render_cutroom.py preview of the current EDL (rendered if missing
      or stale), copied to export/.
-A text file next to the video lists what was left out. A knowledge-base note is written by script.
+A text file next to the video lists what was left out. Nothing goes to the knowledge base
+(only «Завершить проект» on a real final export does that).
 """
 
 from __future__ import annotations
@@ -45,11 +46,7 @@ def _finish(project, src: Path, label: str, version, stats: dict, notes: list[st
     res = {**stats, "file": str(out), "source": label, "skipped": notes, "version": version, "emergency": True,
            "when": time.strftime("%Y-%m-%d %H:%M:%S")}
     (_out_dir(project) / "last_emergency.json").write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
-    try:
-        from . import kb
-        kb.after_render(project, res, mode, emergency=True, queue=queue)
-    except Exception as e:  # noqa: BLE001 — the video is out; the note is best effort
-        res["kb_error"] = str(e)[:200]
+    # an emergency export is never a reference: nothing goes to the knowledge base
     return res
 
 
@@ -68,6 +65,9 @@ def export(project, job: Job | None = None, queue=None, log=print) -> dict:
         try:
             say("1080p из блоков (без ИИ)…")
             stats = build.run_sync(project, "final", log=say)
+            # this 1080p build is an emergency one: it never counts as the project's final render
+            lf = project.edit / "quick" / "logs" / "last_final.json"
+            lf.write_text(json.dumps({**stats, "emergency": True}, ensure_ascii=False, indent=1), encoding="utf-8")
             return _finish(project, Path(stats["file"]), "быстрый режим, сборка 1080p", stats["version"], stats, _skipped_quick(project), "quick", queue)
         except Exception as e:  # noqa: BLE001
             errors.append(f"сборка 1080p: {e}")

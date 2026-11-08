@@ -137,7 +137,8 @@ function StepSources() {
 }
 
 type KbInfo = { info: { vault: string | null; kb: string | null; notes: number; renders: number; rules: number; skills: string[]; skills_missing: string[];
-  obsidian_skills: string[]; ref_render: string | null; when: string } | null; index: Record<string, number> };
+  obsidian_skills: string[]; ref_render: string | null; when: string } | null; index: Record<string, number>;
+  project: { finished: boolean; version?: number; when?: string; can_finish: boolean; why_not: string | null; pending_assets: number } | null };
 
 /** What the knowledge base gave this project: re-read at every project start. */
 function KbStatus() {
@@ -158,12 +159,47 @@ function KbStatus() {
         <p className="text-warn">Хранилище Obsidian не найдено — укажите vault_path в настройках.</p>
       ) : (
         <div className="text-dim space-y-0.5 mt-0.5">
-          <p>Заметок {i.notes}, правил {i.rules}, прошлых рендеров {i.renders}{i.ref_render ? ` · цвет-референс: ${i.ref_render}` : ""}.</p>
+          <p>Заметок {i.notes}, правил {i.rules}, финальных рендеров завершённых проектов {i.renders}{i.ref_render ? ` · цвет-референс: ${i.ref_render}` : ""}.</p>
+          <p>Этот проект: {kb?.project?.finished ? `завершён (v${kb.project.version}) — в базе знаний` : "в работе — в базу знаний и референсы не попадает до «Завершить проект» (шаг 4)"}.</p>
           <p>Ассеты: брендбук {kb?.index.brandbook ?? 0}, презентаций {kb?.index.presentation ?? 0}, графики {kb?.index.graphic ?? 0}.</p>
           <p>Скиллы для агентов: {i.skills.length ? i.skills.join(", ") : "—"}{i.skills_missing.length ? <span className="text-warn"> · не установлены: {i.skills_missing.join(", ")}</span> : null}</p>
           <p>Заметки после рендера: {i.obsidian_skills.length ? `скиллы ${i.obsidian_skills.join(", ")}` : <span className="text-warn">скиллы Obsidian для Claude не найдены — заметки пишет только скрипт</span>}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** «Завершить проект»: only now the final export becomes a knowledge-base note and a reference. */
+function FinishProject() {
+  const jobs = useStore((s) => s.jobs);
+  const [kb, setKb] = useState<KbInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const last = jobs.filter((j) => j.kind === "qassemble").at(-1);
+  const load = () => api.get<KbInfo>("/api/kb").then(setKb).catch(() => {});
+  useEffect(() => { load(); }, [last?.status, last?.id]);
+  const st = kb?.project;
+  const go = async () => {
+    setBusy(true);
+    try {
+      await api.post("/api/kb/finish", {});
+      useStore.getState().say("ok", "Проект завершён: финальный рендер записан в базу знаний и станет референсом для следующих проектов.");
+      await load();
+    } catch (e) { useStore.getState().say("err", (e as Error).message); }
+    setBusy(false);
+  };
+  if (!st) return null;
+  return (
+    <div className="mt-3 pt-3 border-t border-line">
+      <button className="btn w-full justify-center" disabled={!st.can_finish || busy} onClick={go}
+        title={st.why_not ?? "Финальный экспорт текущей версии → заметка в Obsidian, ассеты в индекс, референс для новых проектов"}>
+        {st.finished && !st.can_finish ? `Проект завершён (v${st.version})` : st.finished ? "Обновить итог проекта в базе знаний" : "Завершить проект → в базу знаний"}
+      </button>
+      <p className="text-dim text-[11.5px] mt-1.5">
+        {st.why_not && !st.finished ? st.why_not
+          : st.finished ? `В базе знаний с ${st.when?.slice(0, 16)}.${st.can_finish ? " Есть более новый финальный экспорт — можно обновить итог." : ""}`
+          : `Пока проект не завершён, его рендеры, презентации и графика (${st.pending_assets}) в базу знаний и референсы не попадают.`}
+      </p>
     </div>
   );
 }
@@ -439,6 +475,7 @@ function StepSlides() {
             <button className="text-accent underline" onClick={() => window.cutroom?.revealInFolder(fin.file)}>Показать файл</button>
           </p>
         )}
+        <FinishProject />
       </div>
     </>
   );
