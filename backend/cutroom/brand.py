@@ -145,6 +145,10 @@ def presets() -> list[dict]:
     bg = brand_grade()
     if bg:
         out.append({"id": "brand", "name": (b.get("grade") or {}).get("name") or "Бренд", "grade": bg, "kind": "brand"})
+    from .kb import ref_preset
+    ref = ref_preset()   # the grade of the last render in the knowledge base
+    if ref:
+        out.append(ref)
     for k, name in PRESET_NAMES.items():
         out.append({"id": k, "name": name, "grade": None if k == "none" else {"preset": k}, "kind": "ready"})
     for p in _user_presets():

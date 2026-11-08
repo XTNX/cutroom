@@ -6,6 +6,7 @@ import { cls } from "../util";
 export type ClaudeStatus = {
   checked: number | null; found: boolean; path: string | null; version: string | null; logged_in: boolean;
   account: string | null; plan: string | null; error: string | null; login_opened: number | null;
+  agent?: { quota: boolean; since: number | null; model: string | null; message: string | null; routing: Record<string, string> };
 };
 
 let cache: ClaudeStatus | null = null;
@@ -36,11 +37,14 @@ export function ClaudeBadge() {
     return () => clearInterval(t);
   }, [s?.logged_in]);
 
-  const state = !s?.checked ? "wait" : !s.found ? "missing" : s.logged_in ? "ok" : "login";
-  const dot = { wait: "bg-faint pulse", missing: "bg-err", login: "bg-warn pulse", ok: "bg-ok" }[state];
-  const label = { wait: "Claude…", missing: "Claude не найден", login: "Войти в Claude", ok: "Claude" }[state];
-  const title = state === "ok"
-    ? `Claude Code ${s!.version ?? ""} подключён${s!.plan ? ` · план ${s!.plan}` : ""}${s!.account ? ` · ${s!.account}` : ""}. Агенты готовы.`
+  const state = !s?.checked ? "wait" : !s.found ? "missing" : !s.logged_in ? "login" : s.agent?.quota ? "quota" : "ok";
+  const dot = { wait: "bg-faint pulse", missing: "bg-err", login: "bg-warn pulse", ok: "bg-ok", quota: "bg-err pulse" }[state];
+  const label = { wait: "Claude…", missing: "Claude не найден", login: "Войти в Claude", ok: "Claude", quota: "Токены закончились" }[state];
+  const routing = s?.agent?.routing ? "\nМодели: " + Object.entries(s.agent.routing).map(([r, m]) => `${r} → ${m.replace("claude-", "")}`).join(", ") : "";
+  const title = state === "quota"
+    ? `Лимит модели ${s!.agent?.model ?? ""}: ${s!.agent?.message ?? ""}\nМонтаж, цвет, звук и рендеры работают без ИИ. Готовый ролик — «Экстренный экспорт».${routing}`
+    : state === "ok"
+    ? `Claude Code ${s!.version ?? ""} подключён${s!.plan ? ` · план ${s!.plan}` : ""}${s!.account ? ` · ${s!.account}` : ""}. Агенты готовы.${routing}`
     : state === "login" ? "Агентам нужен вход в Claude: нажмите, откроется браузер"
     : state === "missing" ? (s?.error ?? "Claude Code не найден") : "Проверяю связь с Claude Code";
   return (

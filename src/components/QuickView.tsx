@@ -7,6 +7,7 @@ import { QuickTimeline } from "./QuickTimeline";
 import { QuickSteps } from "./QuickSteps";
 import { QuickDialogs } from "./QuickDialogs";
 import { cls } from "../util";
+import { cssFilter } from "./ColorPanel";
 
 export const quickUrl = (path: string) => backendUrl(path);
 
@@ -103,6 +104,17 @@ function blockAt<T extends Block>(bs: T[], f: number): T | undefined {
   return bs.find((b) => f >= b.start && f < end(b));
 }
 
+const ROLE_VAR: Record<string, string> = { front: "var(--cam1)", top: "var(--cam2)", side: "var(--cam3)" };
+const BUILD_KINDS = ["qblock", "qassemble", "qplan"];
+
+function useBuilding() {
+  const jobs = useStore((s) => s.jobs);
+  const busy = jobs.filter((j) => BUILD_KINDS.includes(j.kind) && (j.status === "running" || j.status === "queued"));
+  const blocks = busy.filter((j) => j.kind === "qblock");
+  const done = blocks.length ? blocks.reduce((a, j) => a + (j.status === "running" ? j.progress : 0), 0) / blocks.length : 0;
+  return { busy: busy.length > 0, blocks: blocks.length, progress: done };
+}
+
 function Monitors() {
   const q = useQuick();
   const d = shownDoc(q);
@@ -113,6 +125,19 @@ function Monitors() {
   const active = d && v ? (roleOf(d, v.src) === "top" ? "top" : roleOf(d, v.src) === "side" ? "side" : "front") : "front";
   const hasSide = !!d && (d.tracks.video.some((x) => roleOf(d, x.src) === "side") || Object.values(cov).some((c) => c.side));
   const panes: ("front" | "top" | "side")[] = hasSide ? ["front", "top", "side"] : ["front", "top"];
+  // a camera switch under the playhead: flash the new monitor with a big «→ Верх»
+  const prevActive = useRef(active);
+  const [flash, setFlash] = useState<{ to: string; from: string; n: number } | null>(null);
+  useEffect(() => {
+    if (prevActive.current !== active && v) {
+      const from = prevActive.current;
+      setFlash((x) => ({ to: active, from, n: (x?.n ?? 0) + 1 }));
+      const t = window.setTimeout(() => setFlash(null), 1100);
+      prevActive.current = active;
+      return () => clearTimeout(t);
+    }
+    prevActive.current = active;
+  }, [active]);
   const switchMode = async () => {
     try {
       await api.post("/api/quick/switch", { to: "full" });
@@ -122,6 +147,17 @@ function Monitors() {
     } catch (e) { useStore.getState().say("err", (e as Error).message); }
   };
   const draft = q.data?.build.draft;
+  // the next camera switch after the playhead
+  const next = (() => {
+    if (!d || !v) return null;
+    for (const b of d.tracks.video) {
+      if (b.start <= f) continue;
+      const r = roleOf(d, b.src);
+      const k = r === "top" || r === "side" ? r : "front";
+      if (k !== active) return { role: k, in: (b.start - f) / fps };
+    }
+    return null;
+  })();
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-bg">
@@ -130,7 +166,7 @@ function Monitors() {
           <Assembled url={quickUrl(`/media/quick/preview?v=${draft.version}`)} />
         ) : panes.map((role, i) => (
           <div key={role} className="contents">
-            <Pane role={role} active={active === role} v={v} f={f} fps={fps} />
+            <Pane role={role} active={active === role} v={v} f={f} fps={fps} flash={flash && flash.to === role ? flash : null} />
             {i === 0 && (
               <div className="w-6 shrink-0 flex flex-col items-center justify-center gap-2">
                 <button onClick={switchMode} title="Перейти в полный режим (проект сохранится)" aria-label="Переключить режим"
@@ -140,12 +176,16 @@ function Monitors() {
           </div>
         ))}
       </div>
+      {d && <ProgramStrip />}
       <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-t border-line bg-panel text-[12px]">
         <button className="btn btn-sm w-16 justify-center" onClick={qToggle}>{q.playing ? "Пауза" : "Играть"}</button>
         <span className="tabular-nums text-dim">{fmtT(q.time)}</span>
-        <span className="text-dim truncate">
-          {q.propDoc ? "Показываю предложение ИИ — ещё не применено" : v ? `Ракурс: ${ROLE_NAMES[active]}` : ""}
-        </span>
+        {q.propDoc ? <span className="text-dim truncate">Показываю предложение ИИ — ещё не применено</span> : v ? (
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="px-1.5 rounded text-[11.5px] font-medium text-white" style={{ background: ROLE_VAR[active] }}>{ROLE_NAMES[active]}</span>
+            {next && <span className="text-dim truncate">дальше <b style={{ color: ROLE_VAR[next.role] }}>{ROLE_NAMES[next.role]}</b> через {next.in.toFixed(1)} с</span>}
+          </span>
+        ) : null}
         <span className="flex-1" />
         <BuildBadge />
         <button className="chip" aria-pressed={q.assembled} disabled={!draft} onClick={() => q.set({ assembled: !q.assembled })}
@@ -155,11 +195,45 @@ function Monitors() {
   );
 }
 
-function Pane({ role, active, v, f, fps }: { role: "front" | "top" | "side"; active: boolean; v?: VBlock; f: number; fps: number }) {
+/** The whole film as camera-coloured stripes: where each angle is, where it switches, where the playhead is. */
+function ProgramStrip() {
+  const q = useQuick();
+  const d = shownDoc(q)!;
+  const fps = fpsOf(d);
+  const n = Math.max(1, ...d.tracks.video.map(end), ...d.tracks.audio.map(end));
+  const ref = useRef<HTMLDivElement>(null);
+  const seek = (e: React.MouseEvent) => {
+    const r = ref.current!.getBoundingClientRect();
+    qSeek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * n / fps);
+  };
+  return (
+    <div className="shrink-0 px-2 pb-1.5">
+      <div ref={ref} onMouseDown={seek} title="Ракурсы по всему ролику: клик — перейти" aria-label="Ракурсы по всему ролику"
+        className="relative h-3 rounded-sm bg-panel-3 overflow-hidden cursor-pointer">
+        {d.tracks.video.map((b, i) => {
+          const r = roleOf(d, b.src);
+          const k = r === "top" || r === "side" ? r : "front";
+          const pr = i ? roleOf(d, d.tracks.video[i - 1].src) : null;
+          const pk = pr === "top" || pr === "side" ? pr : pr ? "front" : null;
+          return (
+            <div key={b.id} className="absolute top-0 bottom-0" title={`${ROLE_NAMES[k]} ${fmtT(b.start / fps)}–${fmtT(end(b) / fps)}`}
+              style={{ left: `${(b.start / n) * 100}%`, width: `${(b.len / n) * 100}%`, background: ROLE_VAR[k], opacity: 0.85,
+                borderLeft: pk && pk !== k ? "2px solid var(--fg)" : undefined }} />
+          );
+        })}
+        <div className="absolute top-[-2px] bottom-[-2px] w-[2px] bg-fg" style={{ left: `${(q.time * fps / n) * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function Pane({ role, active, v, f, fps, flash }: { role: "front" | "top" | "side"; active: boolean; v?: VBlock; f: number; fps: number;
+  flash: { from: string; n: number } | null }) {
   const q = useQuick();
   const d = shownDoc(q);
   const cov = shownCover(q);
   const vid = useRef<HTMLVideoElement>(null);
+  const building = useBuilding();
   // which file and second this pane shows right now
   let src: string | null = null, at = 0;
   if (d && v) {
@@ -175,15 +249,21 @@ function Pane({ role, active, v, f, fps }: { role: "front" | "top" | "side"; act
     if (q.playing && el.paused) el.play().catch(() => {});
     if (!q.playing && !el.paused) el.pause();
   });
+  // the grade shows at once as a CSS approximation; the exact ffmpeg grade lands in the assembled preview
+  const grade = v ? (v.color !== undefined && v.color !== null ? v.color : d?.grade ?? null) : null;
+  const filter = cssFilter(grade as never);
   const slide = d ? blockAt(d.tracks.slides, f) : undefined;
   const card = d ? blockAt(d.tracks.overlays, f) : undefined;
   return (
-    <div className={cls("flex-1 min-w-0 self-center aspect-video max-h-full relative rounded-[8px] overflow-hidden bg-black border-2", active ? "border-accent" : "border-transparent opacity-80")}>
-      <div className={cls("absolute top-1.5 left-2 z-10 text-[11px] px-1.5 rounded", active ? "bg-accent text-[var(--accent-fg)]" : "bg-black/60 text-white/80")}>
-        {ROLE_NAMES[role]}{active ? " · в кадре" : ""}
+    <div className={cls("min-w-0 self-center aspect-video max-h-full relative rounded-[8px] overflow-hidden bg-black border-[3px] transition-[flex-grow,opacity] duration-300",
+      active ? "" : "border-transparent opacity-70")}
+      style={{ flexGrow: active ? 1.7 : 1, flexBasis: 0, borderColor: active ? ROLE_VAR[role] : undefined }}>
+      <div className="absolute top-1.5 left-2 z-10 text-[11px] px-1.5 rounded font-medium"
+        style={active ? { background: ROLE_VAR[role], color: "#fff" } : { background: "rgb(0 0 0 / 0.6)", color: "rgb(255 255 255 / 0.8)" }}>
+        {active ? "● " : ""}{ROLE_NAMES[role]}{active ? " · в кадре" : ""}
       </div>
       {src ? (
-        <video ref={vid} key={src} src={mediaUrl("proxy", src)} muted preload="auto" className="w-full h-full object-contain" />
+        <video ref={vid} key={src} src={mediaUrl("proxy", src)} muted preload="auto" className="w-full h-full object-contain" style={{ filter }} />
       ) : (
         <div className="absolute inset-0 grid place-items-center text-white/40 text-[12px]">{v ? "нет синхронного кадра" : "—"}</div>
       )}
@@ -193,6 +273,20 @@ function Pane({ role, active, v, f, fps }: { role: "front" | "top" | "side"; act
       )}
       {active && card?.status === "ready" && card.files && <CardOverlay id={card.id} v={card.files.v} offset={(f - card.start) / fps} />}
       {active && <Sound f={f} fps={fps} />}
+      {flash && (
+        <div key={flash.n} className="angle-flash absolute inset-0 z-20 grid place-items-center pointer-events-none">
+          <span className="px-3 py-1 rounded-[6px] text-white text-[20px] font-semibold shadow-lg" style={{ background: ROLE_VAR[role] }}>
+            {ROLE_NAMES[flash.from] ?? ""} → {ROLE_NAMES[role]}
+          </span>
+        </div>
+      )}
+      {active && src && building.busy && (
+        <div className="absolute bottom-1.5 right-2 z-10 text-[10.5px] px-1.5 py-0.5 rounded bg-black/70 text-white/90 flex items-center gap-1.5"
+          title="Цвет и правки показаны сразу (приближение). Точный рендер блоков идёт в фоне и попадёт в «Собранное превью».">
+          <span className="w-2.5 h-2.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          {filter ? "цвет: приближение · " : ""}точный рендер{building.blocks ? ` ${building.blocks} бл.` : "…"}
+        </div>
+      )}
     </div>
   );
 }
@@ -231,6 +325,9 @@ function Sound({ f, fps }: { f: number; fps: number }) {
 function Assembled({ url }: { url: string }) {
   const q = useQuick();
   const el = useRef<HTMLVideoElement>(null);
+  const building = useBuilding();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [url]);
   useEffect(() => {
     const x = el.current;
     if (!x) return;
@@ -241,7 +338,32 @@ function Assembled({ url }: { url: string }) {
   return (
     <div className="flex-1 self-center aspect-video max-h-full relative rounded-[8px] overflow-hidden bg-black border-2 border-accent">
       <div className="absolute top-1.5 left-2 z-10 text-[11px] px-1.5 rounded bg-accent text-[var(--accent-fg)]">Собранное превью</div>
-      <video ref={el} key={url} src={url} className="w-full h-full object-contain" />
+      <video ref={el} key={url} src={url} className={cls("w-full h-full object-contain transition-opacity", building.busy && "opacity-60")}
+        onError={() => setFailed(true)} onLoadedData={() => setFailed(false)} />
+      {building.busy && (
+        <div className="absolute inset-x-0 bottom-0 z-10 bg-black/70 text-white text-[12px] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+            {building.blocks ? `Применяю правки и цвет: пересобираю блоков ${building.blocks}` : "Склеиваю из кэша…"}
+            <span className="flex-1" />
+            <button className="underline text-white/80 pointer-events-auto" onClick={() => q.set({ assembled: false })}>живой монитор (сразу)</button>
+          </div>
+          <div className="h-1 mt-1.5 rounded bg-white/20 overflow-hidden">
+            <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${Math.max(6, building.progress * 100)}%` }} />
+          </div>
+        </div>
+      )}
+      {failed && !building.busy && (
+        <div className="absolute inset-0 z-10 grid place-items-center text-center text-white/80 text-[12px] p-4">
+          <div>
+            Собранное превью не загрузилось.
+            <div className="mt-2 flex gap-2 justify-center">
+              <button className="btn btn-sm" onClick={() => api.post("/api/quick/build").catch((e) => useStore.getState().say("err", e.message))}>Пересобрать</button>
+              <button className="btn btn-sm" onClick={() => q.set({ assembled: false })}>Живой монитор</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

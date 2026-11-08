@@ -191,6 +191,7 @@ def open_project(req: OpenReq):
     state["project"] = p
     remember_recent(p.dir)
     p.scan(req.files)
+    _kb_start(p)   # every project starts by re-reading the knowledge base
     state["sources_version"] += 1
     return project_payload(p)
 
@@ -304,15 +305,73 @@ def media_file(kind: str, sid: str):
 
 @app.get("/api/claude")
 def claude_status():
-    from . import claude_link
+    from . import agent, claude_link
     st = claude_link.status()
-    return st if st.get("checked") else claude_link.check()
+    st = st if st.get("checked") else claude_link.check()
+    return {**st, "agent": agent.status()}
 
 
 @app.post("/api/claude/check")
 def claude_check():
-    from . import claude_link
-    return claude_link.check()
+    from . import agent, claude_link
+    return {**claude_link.check(), "agent": agent.status()}
+
+
+# ------------------------------------------------------------------ emergency export + knowledge base
+
+
+@app.post("/api/export/emergency")
+def emergency_export():
+    """No model involved: works when the tokens ran out. See emergency.py for the fallbacks."""
+    from . import emergency
+    p = proj()
+    for j in queue.active():
+        if j.kind == "emergency":
+            return j.public()
+
+    def run(job: Job):
+        st = emergency.export(p, job, queue)
+        job.note = f"{Path(st['file']).name}" + (f" · не вошло: {len(st['skipped'])}" if st.get("skipped") else "")
+        return st
+
+    return queue.add(Job(kind="emergency", label="Экстренный экспорт без ИИ", lane="render", priority=1, expected=60, fn=run)).public()
+
+
+@app.get("/api/export/emergency")
+def emergency_last():
+    from . import emergency
+    return {"last": emergency.last(proj())}
+
+
+@app.get("/api/kb")
+def kb_info():
+    from . import kb
+    p = state["project"]
+    return {"info": kb.info(), "obsidian_skills": kb.obsidian_skills(), "index": {k: len(kb.items(k)) for k in kb.KINDS},
+            "recent": kb.items()[:12], "project": kb.project_state(p) if p else None}
+
+
+@app.post("/api/kb/finish")
+def kb_finish():
+    """«Завершить проект»: only now the project's final render becomes a note and a reference."""
+    from . import kb
+    try:
+        st = kb.finish(proj(), queue)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    state["sources_version"] += 1
+    return st
+
+
+@app.post("/api/kb/refresh")
+def kb_refresh():
+    return _kb_start(proj()).public()
+
+
+def _kb_start(p: Project) -> Job:
+    from . import kb
+    return queue.add(Job(kind="kb", label="База знаний: перечитываю Obsidian (правила, прошлые рендеры, скиллы)", lane="io",
+                         priority=2, expected=3, fn=lambda job: kb.project_start(p, job)))
 
 
 @app.post("/api/claude/login")
@@ -823,21 +882,50 @@ def put_color(req: ColorPut):
     return _edl_payload(p)
 
 
+_frame_slots = threading.BoundedSemaphore(3)   # preset thumbnails ask for many stills at once
+
+
 @app.get("/media/frame")
-def media_frame(source: str, time: float, g: str = "", graded: int = 1):
-    """A still for the before/after wipe: `g` is the grade as JSON (empty = untouched)."""
+def media_frame(source: str, time: float, g: str = "", graded: int = 1, w: int = 960):
+    """A still for the before/after wipe and the preset thumbnails: `g` is the grade as JSON.
+
+    Every (source, time, grade, width) is its own cached file, written to a temp name and moved
+    into place: the preset thumbnails ask for a dozen stills at once and used to overwrite one
+    shared frame_after.jpg — broken or swapped pictures. The cache also makes repeats instant."""
+    import hashlib
+    import os as _os
     from .color import frame
     p = proj()
     s = src(source)
     if not Path(s["path"]).exists():
         raise HTTPException(404, "исходник не найден на диске")
-    grade = json.loads(g) if (g and graded) else None
-    out = p.edit / "verify" / f"frame_{'after' if grade else 'before'}.jpg"
     try:
-        frame(Path(s["path"]), time, grade, bool(((s["probe"] or {}).get("video") or {}).get("hdr")), out)
-    except RuntimeError as e:
-        raise HTTPException(500, f"кадр не получился: {e}") from e
-    return Response(out.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        grade = json.loads(g) if (g and graded) else None
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, "цвет не читается") from e
+    width = max(160, min(1920, int(w)))
+    key = hashlib.sha1(json.dumps([s.get("hash") or s["path"], round(time, 2), grade, width], sort_keys=True).encode()).hexdigest()[:24]
+    d = p.edit / "verify" / "frames"
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / f"{key}.jpg"
+    if not out.exists():
+        tmp = d / f"{key}.{threading.get_ident()}.part.jpg"
+        with _frame_slots:
+            if not out.exists():
+                try:
+                    frame(Path(s["path"]), time, grade, bool(((s["probe"] or {}).get("video") or {}).get("hdr")), tmp, width)
+                    _os.replace(tmp, out)
+                except (RuntimeError, OSError) as e:
+                    tmp.unlink(missing_ok=True)
+                    raise HTTPException(500, f"кадр не получился: {e}") from e
+        _prune_frames(d)
+    return Response(out.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+def _prune_frames(d: Path, keep: int = 400) -> None:
+    fs = sorted(d.glob("*.jpg"), key=lambda f: f.stat().st_mtime)
+    for f in fs[:-keep] if len(fs) > keep else []:
+        f.unlink(missing_ok=True)
 
 
 # ------------------------------------------------------------------ infographics (stage 6)
@@ -1178,6 +1266,7 @@ def main() -> None:
             p = Project(Path(args.project), queue)
             p.scan()
             state["project"] = p
+            _kb_start(p)
         except Exception as e:  # noqa: BLE001
             print(f"project open failed: {e}", file=sys.stderr)
 

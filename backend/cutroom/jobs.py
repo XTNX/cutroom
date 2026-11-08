@@ -30,6 +30,7 @@ LANES = {
     "slots": 4,   # infographic slot agents — all in parallel (video-use Hard Rule 10)
     "blocks": 2,  # quick mode: per-block segment renders (NVENC allows several sessions)
     "assemble": 1,  # quick mode: stream-copy assembly + sound
+    "prerender": 1,  # quick mode: 1080p blocks in the background (never takes the preview's slots)
 }
 
 _ids = itertools.count(1)
