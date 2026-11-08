@@ -81,6 +81,9 @@ def build_spec(project, job: Job, oid: str, request: str | None = None) -> dict:
         parts.append(agent.wrap_data("речь вокруг момента появления", speech))
     if isinstance(o.get("spec"), dict):
         parts.append(agent.wrap_data("прошлая версия карточки", json.dumps(o["spec"], ensure_ascii=False)))
+    from .review import decisions_text
+    if decisions_text(project):
+        parts.append(agent.wrap_data("решения проекта (договорённости из прошлых правок)", decisions_text(project)))
     if request:
         parts.append(agent.wrap_data("пожелание человека", request))
     job.log.append(f"агент карточки {oid} думает…")

@@ -516,9 +516,16 @@ function AiBar() {
         <div className="px-3 py-2 border-b border-line bg-[var(--accent-soft)] flex items-start gap-3">
           <div className="flex-1 min-w-0 text-[12.5px]">
             <div className="text-fg">
-              <span className="text-accent font-medium">{prop.kind === "cut" ? "Нарезка по промпту" : prop.fast ? "Предложение (понято по таймкодам, мгновенно)" : "ИИ предлагает"}:</span> {prop.summary}
+              <span className="text-accent font-medium">{prop.kind === "cut" ? "Нарезка по промпту" : prop.kind === "review" ? "Раунд правок заказчика" : prop.fast ? "Предложение (понято по таймкодам, мгновенно)" : "ИИ предлагает"}:</span> {prop.summary}
             </div>
             {prop.warnings?.length > 0 && <div className="text-warn mt-0.5">{prop.warnings.join(" · ")}</div>}
+            {prop.kind === "review" && !!prop.answers?.length && (
+              <div className="mt-1 space-y-0.5 max-h-[120px] overflow-y-auto">
+                {prop.answers.map((a) => (
+                  <div key={a.n} className="text-[12px]"><span className={a.done ? "text-ok" : "text-warn"}>{a.done ? "✓" : "?"} {a.n}.</span> <span className="text-dim">{a.text}</span> → {a.how}</div>
+                ))}
+              </div>
+            )}
             <div className="text-dim mt-0.5">Изменённые блоки обведены пунктиром; мониторы показывают результат. {prop.kind === "cut" ? "«Применить» — это и утверждение стратегии." : ""}</div>
           </div>
           <button className="btn btn-primary btn-sm" onClick={apply}>Применить</button>

@@ -235,6 +235,19 @@ export function QuickTimeline() {
       }
       outline(box.x, box.w, ro, o.id, st === "error");
     }
+    // the customer's notes at their place in THIS version (moved with the speech since the version they watched)
+    for (const n of q.review?.notes ?? []) {
+      if (n.now0 === null || n.now0 === undefined) continue;
+      const x0 = X(n.now0 * fps), x1 = n.now1 !== null && n.now1 !== undefined ? X(n.now1 * fps) : x0;
+      if (x1 < LABEL_W || x0 > size.w) continue;
+      const c = css(n.status === "done" ? "--ok" : n.status === "rejected" ? "--fg-faint" : n.status === "question" ? "--warn" : "--err");
+      g.save();
+      g.fillStyle = c; g.globalAlpha = 0.35;
+      if (x1 > x0 + 2) g.fillRect(Math.max(LABEL_W, x0), RULER - 5, x1 - Math.max(LABEL_W, x0), 4);
+      g.globalAlpha = 1;
+      if (x0 >= LABEL_W) { g.fillRect(x0 - 1, 2, 2, RULER - 4); g.beginPath(); g.moveTo(x0 + 1, 2); g.lineTo(x0 + 9, 6); g.lineTo(x0 + 1, 10); g.closePath(); g.fill(); }
+      g.restore();
+    }
     // the live infographic layer: windows of the full slide as bars, every element's word as a diamond
     const lay = q.live?.layer;
     if (lay) {

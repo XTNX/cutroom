@@ -634,6 +634,9 @@ def live_agent(p, job: Job, page: int | None, request: str | None) -> dict:
         parts.append(agent.wrap_data("прошлая версия спецификации", json.dumps(prev, ensure_ascii=False)))
     if request:
         parts.append(agent.wrap_data("просьба человека", request))
+    from .review import decisions_text
+    if decisions_text(p):
+        parts.append(agent.wrap_data("решения проекта (договорённости из прошлых правок)", decisions_text(p)))
     job.log.append("агент живого слоя думает…")
     spec: agent.LiveSpec = agent.run("live", "\n\n".join(parts), timeout=900, log_dir=p.edit, images=images)  # type: ignore[assignment]
     with cards.lock:
@@ -830,3 +833,128 @@ def media_slide(n: int, thumb: int = 0):
 def media_audition(aid: str, style: str):
     v = variants.load_sound_variants(proj(), aid) or {}
     return _file((v.get(style) or {}).get("file"), "audio/wav")
+
+
+# ---------------------------------------------------------------- review rounds: notes on timecodes → a round of edits → the journal
+
+
+@router.get("/api/quick/review")
+def review_get():
+    from . import review
+    return review.state(proj())
+
+
+class SendReq(BaseModel):
+    label: str = ""
+
+
+@router.post("/api/quick/review/send")
+def review_send(req: SendReq):
+    """«Отправить на согласование»: this version is what the customer watches; their timecodes refer to it."""
+    from . import review
+    p = proj()
+    try:
+        review.send(p, req.label)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    review.write_journal(p)
+    bump()
+    return review.state(p)
+
+
+class NotesReq(BaseModel):
+    text: str
+    round: int | None = None     # the round whose timecodes these are (default: the latest sent)
+    at: float | None = None      # one note at this second of the CURRENT version (from the timeline)
+
+
+@router.post("/api/quick/review/notes")
+def review_notes(req: NotesReq):
+    from . import review
+    p = proj()
+    if not req.text.strip():
+        raise HTTPException(400, "Пустые пометки.")
+    try:
+        made = review.add_notes(p, req.text, req.round, req.at)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    bump()
+    return {**review.state(p), "added": len(made)}
+
+
+class NotePatch(BaseModel):
+    status: str | None = None    # open | done | rejected | question
+    how: str | None = None
+    text: str | None = None
+    kind: str | None = None
+
+
+@router.patch("/api/quick/review/notes/{nid}")
+def review_note_patch(nid: str, req: NotePatch):
+    from . import review
+    p = proj()
+    if req.status and req.status not in ("open", "done", "rejected", "question"):
+        raise HTTPException(400, "статус: open, done, rejected, question")
+    try:
+        review.update_note(p, nid, req.model_dump())
+    except KeyError as e:
+        raise HTTPException(404, "нет пометки") from e
+    bump()
+    return review.state(p)
+
+
+@router.delete("/api/quick/review/notes/{nid}")
+def review_note_delete(nid: str):
+    from . import review
+    p = proj()
+    review.delete_note(p, nid)
+    bump()
+    return review.state(p)
+
+
+class RoundReq(BaseModel):
+    ids: list[str] | None = None   # these notes only (default: all open)
+
+
+@router.post("/api/quick/review/round")
+def review_round(req: RoundReq):
+    """«Собрать правки»: all open notes in one pass of the request agent → one proposal with an answer per note."""
+    from . import review
+    p = proj()
+    gate(p)
+    doc_or_409(p)
+    try:
+        text, notes = review.round_prompt(p, req.ids)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+
+    def run(job: Job):
+        ai.run_request(p, job, f"Правки заказчика ({len(notes)})", None, review={"text": text, "notes": notes})
+        bump()
+
+    return S()._agent_job("qai", f"Раунд правок: {len(notes)} пометок", run).public()
+
+
+class DecisionReq(BaseModel):
+    text: str
+    from_note: str | None = None
+
+
+@router.post("/api/quick/review/decisions")
+def review_decision(req: DecisionReq):
+    from . import review
+    p = proj()
+    if not req.text.strip():
+        raise HTTPException(400, "Пустое решение.")
+    review.add_decision(p, req.text, req.from_note)
+    bump()
+    return review.state(p)
+
+
+@router.delete("/api/quick/review/decisions/{did}")
+def review_decision_delete(did: str):
+    from . import review
+    p = proj()
+    review.delete_decision(p, did)
+    bump()
+    return review.state(p)

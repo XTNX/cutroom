@@ -2,18 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { api, frameUrl, mediaUrl, type Track } from "../api";
 import { useStore } from "../store";
 import { clone, end, fpsOf, split, type Grade, type QDoc } from "../quickOps";
-import { qSeek, ROLE_NAMES, selRange, shownDoc, useQuick, fmtT, type QuickPayload, type Step } from "../quickStore";
+import { qSeek, type Review, type RNote, ROLE_NAMES, selRange, shownDoc, useQuick, fmtT, type QuickPayload, type Step } from "../quickStore";
 import { quickUrl } from "./QuickView";
 import { cls } from "../util";
 
-const STEPS: [Step, string][] = [[1, "Исходники"], [2, "Нарезка"], [3, "Цвет и звук"], [4, "Слайды и графика"]];
+const STEPS: [Step, string][] = [[1, "Исходники"], [2, "Нарезка"], [3, "Цвет и звук"], [4, "Слайды и графика"], [5, "Правки"]];
 
 export function QuickSteps() {
   const step = useQuick((s) => s.step);
   const set = useQuick((s) => s.set);
   return (
     <div className="flex flex-col min-h-0 h-full">
-      <div className="grid grid-cols-4 border-b border-line" role="tablist" aria-label="Шаги">
+      <div className="grid grid-cols-5 border-b border-line" role="tablist" aria-label="Шаги">
         {STEPS.map(([n, label]) => (
           <button key={n} role="tab" aria-selected={step === n} onClick={() => set({ step: n })} title={label}
             className={cls("py-2 text-[11.5px] leading-tight border-b-2", step === n ? "border-accent text-fg" : "border-transparent text-dim hover:text-fg")}>
@@ -26,6 +26,7 @@ export function QuickSteps() {
         {step === 2 && <StepCut />}
         {step === 3 && <StepColorSound />}
         {step === 4 && <StepSlides />}
+        {step === 5 && <StepReview />}
       </div>
     </div>
   );
@@ -227,6 +228,144 @@ function FinishProject() {
           : st.finished ? `В базе знаний с ${st.when?.slice(0, 16)}.${st.can_finish ? " Есть более новый финальный экспорт — можно обновить итог." : ""}`
           : `Пока проект не завершён, его рендеры, презентации и графика (${st.pending_assets}) в базу знаний и референсы не попадают.`}
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 5. review rounds
+
+const STATUS: Record<RNote["status"], [string, string]> = {
+  open: ["открыта", "text-accent"], done: ["сделано", "text-ok"], rejected: ["не делаем", "text-dim"], question: ["вопрос", "text-warn"],
+};
+
+/** The process of the reference's v4…v9: a version goes out → the customer's notes on ITS timecodes →
+ *  one round of edits (an answer per note) → the journal «Что просил | Как сделано» + the decisions. */
+function StepReview() {
+  const q = useQuick();
+  const jobs = useStore((s) => s.jobs);
+  const r = q.review;
+  const [text, setText] = useState("");
+  const [round, setRound] = useState<number | "">("");
+  const [dec, setDec] = useState("");
+  const [here, setHere] = useState("");
+  const job = jobs.filter((j) => j.kind === "qai" && j.label.startsWith("Раунд правок")).at(-1);
+  const busy = !!job && (job.status === "running" || job.status === "queued");
+  const locked = !q.data?.gate_open || !!q.propDoc;
+  const call = async (fn: () => Promise<Review>) => {
+    try { useQuick.setState({ review: await fn() }); } catch (e) { useStore.getState().say("err", (e as Error).message); }
+  };
+  useEffect(() => { api.get<Review>("/api/quick/review").then((x) => useQuick.setState({ review: x })).catch(() => {}); }, [job?.status, q.data?.doc?.meta?.version_id]);
+  if (!r) return <p className="text-dim">Загружаю…</p>;
+  const last = r.rounds.at(-1);
+  const cur = r.current_version;
+  const open = r.notes.filter((n) => n.status === "open" || n.status === "question");
+  const rn = round === "" ? (last?.n ?? 0) : round;
+  const byRound = [...new Set(r.notes.map((n) => n.round))].sort((a, b) => b - a);
+  return (
+    <>
+      <div>
+        <H>Согласование</H>
+        <p className="text-dim text-[11.5px] mb-1.5">
+          {last ? `Последняя отправка — раунд ${last.n}: v${last.version}, ${last.sent}.` : "Ещё ничего не отправляли."}
+          {last && cur !== last.version ? ` Сейчас v${cur}: таймкоды заказчика переносятся на неё по исходникам.` : ""}
+        </p>
+        <button className="btn w-full justify-center" disabled={!q.data?.doc || (!!last && last.version === cur)}
+          title="Эта версия уходит заказчику: его таймкоды будут по ней. Снимок версии сохраняется (как бэкап EDL в эталоне)."
+          onClick={() => call(() => api.post<Review>("/api/quick/review/send", {}))}>
+          {last && last.version === cur ? `v${cur} уже на согласовании (раунд ${last.n})` : `Отправить v${cur ?? ""} на согласование`}
+        </button>
+      </div>
+      <div>
+        <H>Пометки заказчика</H>
+        <textarea className="input w-full py-2 leading-snug resize-y" style={{ height: 120 }} value={text} onChange={(e) => setText(e.target.value)}
+          placeholder={"Вставьте список, по строке на пометку:\n0:18–0:25 полный слайд с шагом 1\n1:45 подсветить запуск\nс 2:40 не перекрывать Иру\nмузыка не должна расти в паузах"} />
+        <div className="flex gap-1.5 mt-1.5">
+          <select className="input h-7 flex-1 text-[11.5px]" value={round} onChange={(e) => setRound(e.target.value === "" ? "" : +e.target.value)} aria-label="По какой версии таймкоды">
+            <option value="">таймкоды по {last ? `раунду ${last.n} (v${last.version})` : `текущей v${cur ?? ""}`}</option>
+            {r.rounds.slice(0, -1).reverse().map((x) => <option key={x.n} value={x.n}>по раунду {x.n} (v{x.version})</option>)}
+            <option value={0}>по текущей v{cur ?? ""}</option>
+          </select>
+          <button className="btn btn-sm" disabled={!text.trim()} onClick={() => call(async () => { const x = await api.post<Review>("/api/quick/review/notes", { text, round: rn }); setText(""); return x; })}>Добавить</button>
+        </div>
+        <div className="flex gap-1.5 mt-1.5">
+          <input className="input flex-1 h-7" value={here} onChange={(e) => setHere(e.target.value)} placeholder={`Своя пометка на ${fmtT(q.time)}`}
+            onKeyDown={(e) => { if (e.key === "Enter" && here.trim()) call(async () => { const x = await api.post<Review>("/api/quick/review/notes", { text: here, at: q.time }); setHere(""); return x; }); }} />
+        </div>
+      </div>
+      <div>
+        <div className="flex items-center gap-2">
+          <H>Пометки ({open.length} открыто)</H>
+          <span className="flex-1" />
+        </div>
+        <button className="btn btn-primary w-full justify-center mb-2" disabled={locked || busy || !open.length}
+          title="Все открытые пометки — одним запросом к ИИ. Результат — предложение внизу; по каждой пометке ответ «как сделано»."
+          onClick={() => api.post("/api/quick/review/round", {}).catch((e) => useStore.getState().say("err", e.message))}>
+          {busy ? `ИИ вносит правки… ${job?.eta ? `~${Math.ceil(job.eta)} с` : ""}` : `Собрать правки (${open.length})`}
+        </button>
+        {byRound.map((n) => (
+          <div key={n} className="mb-2">
+            <div className="text-[11px] text-dim mb-0.5">{n ? `Раунд ${n} · таймкоды по v${r.rounds.find((x) => x.n === n)?.version}` : "Свои пометки"}</div>
+            {r.notes.filter((x) => x.round === n).map((x) => <NoteRow key={x.id} n={x} call={call} />)}
+          </div>
+        ))}
+        {!r.notes.length && <p className="text-dim text-[11.5px]">Пометок нет.</p>}
+      </div>
+      <div>
+        <H>Решения, которые стоит помнить</H>
+        {r.decisions.map((d) => (
+          <div key={d.id} className="flex items-start gap-1.5 text-[11.5px] py-0.5">
+            <span className="flex-1">{d.text}</span>
+            <button className="text-dim hover:text-err" title="Убрать" onClick={() => call(() => api.del<Review>(`/api/quick/review/decisions/${d.id}`))}>×</button>
+          </div>
+        ))}
+        <div className="flex gap-1.5 mt-1">
+          <input className="input flex-1 h-7" value={dec} onChange={(e) => setDec(e.target.value)} placeholder="Например: даты на ленте — по речи, на карточках — из презентации" />
+          <button className="btn btn-sm" disabled={!dec.trim()} onClick={() => call(async () => { const x = await api.post<Review>("/api/quick/review/decisions", { text: dec }); setDec(""); return x; })}>+</button>
+        </div>
+        <p className="text-dim text-[11px] mt-1">Решения видят все агенты этого проекта; они же уходят в базу знаний при «Завершить проект».</p>
+      </div>
+      {!!r.journal.length && (
+        <details>
+          <summary className="text-dim cursor-pointer text-[11.5px]">Журнал правок (edit/project.md)</summary>
+          {r.journal.slice().reverse().map((j, i) => (
+            <div key={i} className="mt-1.5 text-[11.5px]">
+              <div className="text-fg">v{j.version} · {j.when}</div>
+              {j.rows.map((row, k) => <div key={k} className="text-dim">• {row.asked} → <span className={row.status === "done" ? "text-fg" : "text-warn"}>{row.done}</span></div>)}
+            </div>
+          ))}
+        </details>
+      )}
+    </>
+  );
+}
+
+function NoteRow({ n, call }: { n: RNote; call: (fn: () => Promise<Review>) => Promise<void> }) {
+  const r = useQuick((s) => s.review);
+  const [how, setHow] = useState(n.how);
+  const patch = (b: Record<string, unknown>) => call(() => api.patch<Review>(`/api/quick/review/notes/${n.id}`, b));
+  const [label, colr] = STATUS[n.status];
+  const at = n.t0 === null ? "весь ролик" : n.gone ? `было ${fmtT(n.t0)} — вырезано` : `${fmtT(n.now0!)}${n.now1 !== null ? `–${fmtT(n.now1)}` : ""}`;
+  return (
+    <div className={cls("rounded border px-2 py-1.5 mb-1 text-[11.5px]", n.status === "open" ? "border-line-strong" : "border-line opacity-85")}>
+      <div className="flex items-center gap-1.5">
+        <button className={cls("tabular-nums shrink-0", n.gone ? "text-warn" : "text-accent")} disabled={n.now0 === null} onClick={() => n.now0 !== null && qSeek(n.now0)}
+          title={n.moved ? `В версии заказчика — ${fmtT(n.t0!)}; в текущей монтаж сдвинулся` : "Перейти"}>{at}</button>
+        {n.moved && <span className="text-dim">(было {fmtT(n.t0!)})</span>}
+        <span className="px-1 rounded bg-panel-3 text-dim">{r?.kinds[n.kind] ?? n.kind}</span>
+        <span className="flex-1" />
+        <select className={cls("bg-transparent text-[11px]", colr)} value={n.status} onChange={(e) => patch({ status: e.target.value })} aria-label="Статус">
+          {(Object.keys(STATUS) as RNote["status"][]).map((k) => <option key={k} value={k}>{STATUS[k][0]}</option>)}
+        </select>
+        <span className="sr-only">{label}</span>
+      </div>
+      <div className="text-fg mt-0.5">{n.text}</div>
+      <input className="input w-full h-6 mt-1 text-[11px]" value={how} onChange={(e) => setHow(e.target.value)} onBlur={() => how !== n.how && patch({ how })}
+        placeholder="Как сделано (для журнала)" />
+      <div className="flex gap-2 mt-0.5 text-[11px]">
+        <button className="text-dim hover:text-fg" onClick={() => call(() => api.post<Review>("/api/quick/review/decisions", { text: n.how ? `${n.text} → ${n.how}` : n.text, from_note: n.id }))}
+          title="Договорённость на весь проект: её будут соблюдать все агенты">В решения</button>
+        <button className="text-dim hover:text-err" onClick={() => call(() => api.del<Review>(`/api/quick/review/notes/${n.id}`))}>Удалить</button>
+      </div>
     </div>
   );
 }

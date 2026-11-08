@@ -7,7 +7,7 @@ import { useStore } from "./store";
 export type Cover = Record<string, Record<"front" | "top" | "side", { src: string; in: number } | null>>;
 export type BuildStats = { profile: string; version: number; file: string; segments: number; duration: number; rebuilt: string[]; cached: string[];
   audio_rebuilt: string[]; audio_cached: number; t_concat: number; t_audio: number; t_total: number; when: string };
-export type Proposal = { id: string; kind: "cut" | "request"; prompt: string; summary: string; warnings: string[]; created: string; fast?: boolean;
+export type Proposal = { id: string; kind: "cut" | "request" | "review"; answers?: { n: number; done: boolean; how: string; text: string }[]; prompt: string; summary: string; warnings: string[]; created: string; fast?: boolean;
   changed: Record<string, string[]>; selection?: [number, number] | null };
 export type QuickPayload = {
   doc: QDoc | null; mode: "quick" | "full"; gate_open: boolean; proposal: Proposal | null; coverage: Cover;
@@ -19,8 +19,16 @@ export type QuickPayload = {
   warnings?: string[];
   live?: { on: boolean; preview?: string | null };
 };
-export type Step = 1 | 2 | 3 | 4;
+export type Step = 1 | 2 | 3 | 4 | 5;
 export type Dialog = { kind: "card"; id: string } | { kind: "sound"; id: string } | { kind: "slides"; at: number; replace?: string } | null;
+
+export type RNote = { id: string; round: number; version: number; t0: number | null; t1: number | null; text: string; kind: string;
+  status: "open" | "done" | "rejected" | "question"; how: string; done_in: number | null; created: string;
+  now0: number | null; now1: number | null; gone: boolean; moved: boolean };
+export type Review = { rounds: { n: number; version: number; sent: string; file: string | null; duration: number; label: string }[];
+  notes: RNote[]; decisions: { id: string; text: string; from_note: string | null; when: string }[];
+  journal: { version: number; when: string; rows: { asked: string; done: string; status: string; at: number | null }[] }[];
+  current_version: number | null; kinds: Record<string, string> };
 
 export type LiveT = { label?: string; title?: string; text?: string; kind?: string; group?: string; n?: number | null; t: number | null; t1?: number | null; ht?: number | null };
 export type LiveStatus = { on: boolean; spec?: Record<string, unknown>; warnings?: string[]; preview?: string | null;
@@ -28,6 +36,7 @@ export type LiveStatus = { on: boolean; spec?: Record<string, unknown>; warnings
     intro: { t0: number; t1: number; title: string } | null; cta: { t0: number; t1: number; title: string } | null } | null };
 
 type QState = {
+  review: Review | null;           // review rounds: the customer's notes on timecodes, the journal, the decisions
   live: LiveStatus | null;         // the live infographic layer: spec + resolved times (for the panel, the timeline, the monitor)
   data: QuickPayload | null;
   draft: QDoc | null;              // a drag in progress (shown instead of data.doc until committed)
@@ -49,13 +58,14 @@ type QState = {
 };
 
 export const useQuick = create<QState>((set, get) => ({
-  live: null, data: null, draft: null, propDoc: null, propCover: {}, sel: [], step: 1, time: 0, playing: false, assembled: false,
+  review: null, live: null, data: null, draft: null, propDoc: null, propCover: {}, sel: [], step: 1, time: 0, playing: false, assembled: false,
   dialog: null, overwrite: false, ripple: false, snap: true,
   set: (p) => set(p),
   load: async () => {
     const d = await api.get<QuickPayload>("/api/quick");
     set({ data: d });
     if (d.proposal) await get().loadProposal(); else set({ propDoc: null, propCover: {} });
+    api.get<Review>("/api/quick/review").then((r) => set({ review: r })).catch(() => {});
     if (d.live?.on) api.get<LiveStatus>("/api/quick/live").then((l) => set({ live: l })).catch(() => {});
     else set({ live: null });
   },

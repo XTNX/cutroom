@@ -399,6 +399,7 @@ def render_note(project, stats: dict, mode: str = "quick", emergency: bool = Fal
             f"CTA {'да' if facts['live']['cta'] else 'нет'}; субтитры {'да' if facts['live']['subtitles'] else 'нет'}"]) if facts.get("live") else []),
         f"- Файл: `{stats.get('file')}`",
         f"- Сборка: пересобрано {len(stats.get('rebuilt') or [])}, из кэша {len(stats.get('cached') or [])}, {stats.get('t_total', '?')} с", "",
+        *_review_section(project),
         "## Заметки", "", keep or "_Что сработало и что поменять в следующий раз — дополняется после рендера._", "",
     ]
     note.write_text("\n".join(body), encoding="utf-8")
@@ -406,6 +407,24 @@ def render_note(project, stats: dict, mode: str = "quick", emergency: bool = Fal
     index_put("render", f"{project.dir}:{ver}:{mode}", title, stats.get("file"), name, {**meta, "note": str(note)})
     _practices(d)
     return note
+
+
+def _review_section(project) -> list[str]:
+    """The rounds of edits of this project: what the customer asked, how it was done, the decisions."""
+    try:
+        from .quick import review
+        r = review.load(project)
+    except Exception:  # noqa: BLE001
+        return []
+    if not (r["journal"] or r["decisions"]):
+        return []
+    out = ["## Правки по версиям", "", f"Раундов согласования: {len(r['rounds'])}.", ""]
+    for j in r["journal"]:
+        out += [f"**v{j['version']}** ({j['when']})", ""] + [f"- {row['asked']} → {row['done']}" + ("" if row["status"] == "done" else " ⚠")
+                                                            for row in j["rows"]] + [""]
+    if r["decisions"]:
+        out += ["### Решения, которые стоит помнить", ""] + [f"- {d['text']}" for d in r["decisions"]] + [""]
+    return out
 
 
 def _project_note(d: Path, name: str, note: Path, ver, when: str, emergency: bool) -> Path:
@@ -562,8 +581,8 @@ def project_start(project, job=None) -> dict:
             fm, body = _fm(f.read_text(encoding="utf-8", errors="ignore"))
             if info["ref_grade"] is None and fm.get("grade"):
                 info["ref_grade"], info["ref_render"] = fm["grade"], f.stem
-            txt = (_section(body, "Итог") + "\n" + _section(body, "Заметки")).strip()
-            parts.append(f"## Прошлый рендер: {f.stem}{' (этот проект)' if f in mine else ''}\n{txt[:1400]}")
+            txt = (_section(body, "Итог") + "\n" + _section(body, "Правки по версиям")[:900] + "\n" + _section(body, "Заметки")).strip()
+            parts.append(f"## Прошлый рендер: {f.stem}{' (этот проект)' if f in mine else ''}\n{txt[:2200]}")
         # rule notes anywhere in the vault (tag cutroom-rule), outside the Cutroom folder
         v = vault()
         n = 0

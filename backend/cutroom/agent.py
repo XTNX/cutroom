@@ -268,10 +268,17 @@ class QuickOp(BaseModel):
     text: str = ""
 
 
+class NoteAnswer(BaseModel):
+    n: int                          # the number of the customer's note in the round
+    done: bool                      # the ops above do it
+    how: str                        # «Как сделано» for the journal (or why it can't be done / what to ask)
+
+
 class QuickPlan(BaseModel):
     summary: str
-    ops: list[QuickOp] = Field(default_factory=list, max_length=12)
+    ops: list[QuickOp] = Field(default_factory=list, max_length=24)
     warnings: list[str] = Field(default_factory=list)
+    answers: list[NoteAnswer] = Field(default_factory=list, max_length=40)
 
 
 class QuickRange(BaseModel):

@@ -79,6 +79,10 @@ def context(project, doc: dict, sel: tuple[int, int] | None) -> list[str]:
            for o in doc["tracks"]["overlays"]]
     if on:
         out.append(agent.wrap_data("слайды и карточки на таймлайне", "\n".join(on)))
+    from .review import decisions_text
+    dec = decisions_text(project)
+    if dec:
+        out.append(agent.wrap_data("решения проекта (договорённости из прошлых раундов правок)", dec))
     lv = (doc.get("live") or {}).get("spec")
     if lv:
         out.append(agent.wrap_data("живая инфографика", f"есть: «{lv.get('title', '')}», месяцев {len(lv.get('months') or [])}, "
@@ -314,6 +318,9 @@ def cut_ranges(project, doc: dict, prompt: str, sids: set[str] | None = None, no
         agent.wrap_data("дубли и роли камер", _roles_block(project, doc)),
         agent.wrap_data("takes_packed.md", _packed(project, sids)),
     ]
+    from .review import decisions_text
+    if decisions_text(project):
+        prompt_parts.append(agent.wrap_data("решения проекта (договорённости из прошлых правок)", decisions_text(project)))
     out: agent.QuickCut = agent.run("quickcut", "\n\n".join(prompt_parts), timeout=900, log_dir=project.edit)  # type: ignore[assignment]
     raw = []
     eff = model.offsets(project)
@@ -347,10 +354,12 @@ def run_cut(project, job: Job, prompt: str) -> dict:
         raise RuntimeError("Сначала загрузите исходники (шаг 1).")
     job.log.append("агент нарезки думает…")
     ranges, summary = cut_ranges(project, doc, prompt)
+    from .review import anchor_graphics, replace_graphics
+    anchors = anchor_graphics(doc)
     new = json.loads(json.dumps(doc))
     video, audio, warn = blocks_from_ranges(project, new, ranges)
     new["tracks"]["video"], new["tracks"]["audio"] = video, audio
-    new["tracks"]["slides"] = [s for s in new["tracks"]["slides"]]   # slides and cards stay where they were
+    warn += replace_graphics(anchors, new)   # slides and cards follow their moment of the speech into the new cut
     fps = fps_of(new)
     total = sum(b["len"] for b in video) / fps
     tops = sum(1 for v in video if model.role(new, project, v["src"]) == "top")
@@ -364,18 +373,26 @@ def run_cut(project, job: Job, prompt: str) -> dict:
     return prop
 
 
-def run_request(project, job: Job | None, prompt: str, sel: dict | None) -> dict:
+def run_request(project, job: Job | None, prompt: str, sel: dict | None, review: dict | None = None) -> dict:
+    """One request → a proposal. `review` = a round of the customer's notes: {"text": numbered notes in
+    the current timecodes, "notes": [...]} — the agent answers each note for the journal."""
+    from .review import anchor_graphics, replace_graphics
     doc = model.current(project)
     if not doc or not doc["tracks"]["video"]:
         raise RuntimeError("Сначала соберите монтаж (шаг 2).")
     sf = selection_frames(doc, sel)
-    plan = fast_parse(prompt, sf is not None)
+    plan = None if review else fast_parse(prompt, sf is not None)
     fast = plan is not None
     if plan is None:
         if job:
-            job.log.append("агент разбирает просьбу…")
-        parts = ["Разбери просьбу человека в операции.", agent.wrap_data("просьба", prompt)] + context(project, doc, sf)
-        plan = agent.run("quick", "\n\n".join(parts), timeout=300, log_dir=project.edit)  # type: ignore[assignment]
+            job.log.append("агент разбирает правки заказчика…" if review else "агент разбирает просьбу…")
+        if review:
+            parts = ["Внеси правки заказчика: операции + ответ по каждой пометке.",
+                     agent.wrap_data("правки заказчика", review["text"])] + context(project, doc, None)
+        else:
+            parts = ["Разбери просьбу человека в операции.", agent.wrap_data("просьба", prompt)] + context(project, doc, sf)
+        plan = agent.run("quick", "\n\n".join(parts), timeout=600 if review else 300, log_dir=project.edit)  # type: ignore[assignment]
+    anchors = anchor_graphics(doc)   # slides and cards stay on their moment of the speech through a re-cut
 
     def recut(d: dict, f0: int, f1: int, text: str):
         fps = fps_of(d)
@@ -388,10 +405,17 @@ def run_request(project, job: Job | None, prompt: str, sel: dict | None) -> dict
         return blocks_from_ranges(project, d, ranges)
 
     new, warn, follow = apply_ops(project, doc, plan.ops, sf, run_recut=recut)
+    if any((o.op if not isinstance(o, dict) else o["op"]) == "recut" for o in plan.ops):
+        warn += replace_graphics(anchors, new)
     new = model.normalize(project, new)
     prop = {"id": model.new_id("p"), "kind": "request", "prompt": prompt, "created": time.strftime("%H:%M:%S"), "fast": fast,
             "summary": plan.summary, "ops": [o.model_dump() for o in plan.ops], "warnings": list(plan.warnings) + warn,
             "base": doc["meta"].get("version_id"), "selection": sf, "doc": new, "follow": follow}
+    if review:
+        prop["kind"] = "review"
+        prop["review"] = {"notes": review["notes"], "answers": [a.model_dump() for a in plan.answers]}
+        prop["answers"] = [{"n": a.n, "done": a.done, "how": a.how, "text": review["notes"][a.n - 1]["text"] if 0 < a.n <= len(review["notes"]) else ""}
+                           for a in plan.answers]
     prop["changed"] = changed(doc, new)
     proposal_path(project).write_text(json.dumps(prop, ensure_ascii=False), encoding="utf-8")
     if job:
@@ -418,6 +442,9 @@ def apply(project) -> tuple[dict, dict]:
         doc.setdefault("meta", {})["strategy_hash"] = edl.text_hash(text)
     vid = model.save(project, doc, "ai", ("ИИ: " + prop["prompt"])[:120])
     drop_proposal(project)
+    if prop.get("review"):   # the round's journal: «Что просил | Как сделано» per note
+        from .review import answers_to_notes
+        answers_to_notes(project, prop["review"]["notes"], prop["review"]["answers"], vid)
     return model.current(project), {**prop["follow"], "version": vid}
 
 
@@ -425,7 +452,7 @@ def summary_of(prop: dict | None) -> dict | None:
     """The proposal for the UI (without the full document)."""
     if not prop:
         return None
-    return {k: prop.get(k) for k in ("id", "kind", "prompt", "summary", "ops", "warnings", "changed", "created", "fast", "selection")}
+    return {k: prop.get(k) for k in ("id", "kind", "prompt", "summary", "ops", "warnings", "changed", "created", "fast", "selection", "answers")}
 
 
 def preview_doc(project) -> dict | None:
