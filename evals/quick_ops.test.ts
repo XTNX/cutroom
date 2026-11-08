@@ -1,6 +1,6 @@
 // Quick-mode timeline operations: split, move (free / overwrite), trim/extend, delete (lift / ripple),
 // linked picture+sound. Run: node evals/quick_ops.test.ts
-import { closeGaps, move, remove, split, trim, type QDoc } from "../src/quickOps.ts";
+import { closeGaps, move, remove, rippleTrim, roll, rollPartner, split, trim, type QDoc } from "../src/quickOps.ts";
 
 let fails = 0;
 const ok = (cond: boolean, what: string) => { console.log((cond ? "PASS " : "FAIL ") + what); if (!cond) fails++; };
@@ -47,6 +47,33 @@ ok(v2.start === 120 && v2.len === 30 && Math.abs(v2.in - 0.8) < 1e-6, "подр�
 ok(d.tracks.audio.find((b) => b.id === "a2")!.start === 120, "подрезка: связанный звук подрезан так же");
 d = trim(base(), { track: "video", id: "v2" }, "end", 80, dur, true);
 ok(d.tracks.video.find((b) => b.id === "v2")!.len === 130 && d.tracks.video.find((b) => b.id === "v3")!.start === 230, "растяжка с перезаписью: съедает начало соседа");
+
+// roll: the cut between two touching picture blocks (an angle switch) moves, the sound stays
+const V = (doc: QDoc, id: string) => doc.tracks.video.find((b) => b.id === id)!;
+ok(rollPartner(base(), { track: "video", id: "v1" }, "end")?.id === "v2" && rollPartner(base(), { track: "video", id: "v2" }, "end") === null,
+  "стык: у v1 справа сосед v2, у v2 справа пауза — стыка нет");
+d = roll(base(), { track: "video", id: "v1" }, { track: "video", id: "v2" }, 20, dur);
+ok(V(d, "v1").len === 120 && V(d, "v2").start === 120 && V(d, "v2").len === 30 && Math.abs(V(d, "v2").in - 0.8) < 1e-6,
+  "длина ракурса: первый +20 кадров, второй −20 и вход +0,8 с (синхрон сохранён)");
+ok(JSON.stringify(d.tracks.audio) === JSON.stringify(base().tracks.audio) && V(d, "v3").start === 200, "длина ракурса: звук и остальной ролик не тронуты");
+d = roll(base(), { track: "video", id: "v1" }, { track: "video", id: "v2" }, -30, dur);
+ok(V(d, "v1").len === 100 && V(d, "v2").start === 100, "длина ракурса влево: второй не может начаться раньше своего исходника (вход 0)");
+d = roll(base(), { track: "video", id: "v1" }, { track: "video", id: "v2" }, 500, dur);
+ok(V(d, "v2").len === 3, "длина ракурса: второй ракурс не короче 3 кадров");
+
+// ripple: the length changes, the neighbour stays whole, the rest of the film moves
+d = rippleTrim(base(), { track: "video", id: "v1" }, "end", 25, dur);
+ok(V(d, "v1").len === 125 && V(d, "v2").start === 125 && V(d, "v2").len === 50 && V(d, "v2").in === 0, "сдвиг: v1 длиннее на 25, сосед v2 целый, просто дальше");
+ok(V(d, "v3").start === 225 && d.tracks.overlays[0].start === 235 && d.tracks.audio[0].len === 125 && d.tracks.audio[1].start === 125,
+  "сдвиг: звук и всё после сдвинулись на 25 кадров, связанный звук удлинён");
+d = rippleTrim(base(), { track: "video", id: "v1" }, "end", -40, dur);
+ok(V(d, "v1").len === 60 && V(d, "v2").start === 60 && V(d, "v2").len === 50 && d.tracks.audio[1].start === 60, "сдвиг: v1 короче на 40, сосед подтянулся целым");
+d = rippleTrim(base(), { track: "video", id: "v2" }, "start", -100, dur);
+ok(V(d, "v2").start === 100 && V(d, "v2").len === 50 && V(d, "v2").in === 0, "сдвиг влево: исходник v2 начинается с 0 — растянуть нечем");
+d = rippleTrim(base(), { track: "video", id: "v3" }, "start", -25, dur);
+ok(V(d, "v3").start === 200 && V(d, "v3").len === 75 && Math.abs(V(d, "v3").in - 29) < 1e-6 && d.tracks.overlays[0].start === 235,
+  "сдвиг за левый край: v3 берёт секунду раньше из исходника, стоит на месте, длиннее на 25; карточка после сдвинулась");
+ok(V(d, "v2").start === 100 && V(d, "v2").len === 50, "сдвиг за левый край: блок перед ним не тронут");
 
 // delete: lift leaves a gap, ripple closes it on every track
 d = remove(base(), [{ track: "video", id: "v2" }], false);
