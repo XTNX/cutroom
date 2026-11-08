@@ -95,7 +95,16 @@ def payload(p) -> dict:
             "build": {"draft": build.last(p, "draft"), "final": build.last(p, "final")},
             "brand": {"found": b["found"], "need": b["need"], "colors": b["colors"], "note": b["note"]},
             "styles": {k: v["label"] for k, v in build.STYLES.items()},
-            "beds": {k: v["bed"] for k, v in build.STYLES.items()}}
+            "beds": {k: v["bed"] for k, v in build.STYLES.items()},
+            "live": live_brief(p, d)}
+
+
+def live_brief(p, d) -> dict:
+    from . import live
+    if not d or not (d.get("live") or {}).get("spec"):
+        return {"on": False}
+    f = live.preview_file(p, d)
+    return {"on": True, "preview": Path(f).name if f else None}
 
 
 def schedule_build(p, delay: float = 1.2):
@@ -108,6 +117,7 @@ def schedule_build(p, delay: float = 1.2):
 
     if model.current(p) and edl.strategy_approved(p) and get_mode(p) == "quick":
         build.schedule(p, S().queue, "draft", delay, on_done=done)
+        live_preview(p)   # the layer's monitor stills depend only on the document
 
 
 def card_jobs(p, oid: str, request: str | None = None, with_spec: bool = True) -> list[int]:
@@ -193,7 +203,7 @@ def put_doc(req: DocPut):
         cur = doc_or_409(p)
         old = {o["id"]: o for o in cur["tracks"]["overlays"]}
         d = req.doc
-        for k in ("roles", "presentation", "music", "rate"):
+        for k in ("roles", "presentation", "music", "rate", "live"):
             d[k] = cur.get(k)
         for o in d["tracks"].get("overlays", []):
             if o["id"] in old:   # spec, drawing and status belong to the server
@@ -331,6 +341,9 @@ def apply_proposal():
         card_jobs(p, oid, follow.get("requests", {}).get(oid))
     for oid in follow.get("draw", []):
         card_jobs(p, oid, with_spec=False)
+    if follow.get("live"):   # «живая инфографика»: the layer agent applies the note to the current spec
+        req = follow["live"]
+        S()._agent_job("qlive", f"Живая инфографика: {req[:50]}", lambda job: (live_agent(p, job, None, req), bump()))
     schedule_build(p, 0.3)
     bump()
     return payload(p)
@@ -465,6 +478,7 @@ def sound_apply(aid: str, req: StyleReq):
 
 class MusicReq(BaseModel):
     track: str | None = None
+    flat: bool | None = None    # the reference bed: one even −29 LUFS level, no ducking
 
 
 @router.put("/api/quick/music")
@@ -476,7 +490,8 @@ def put_music(req: MusicReq):
         t = next((x for x in music.list_tracks() if x["id"] == req.track), None)
         if not t:
             raise HTTPException(404, "трек не найден на полке")
-        d["music"] = {"track": t["id"], "path": t["path"], "title": t.get("title") or Path(t["path"]).stem}
+        d["music"] = {"track": t["id"], "path": t["path"], "title": t.get("title") or Path(t["path"]).stem,
+                      "flat": bool(req.flat if req.flat is not None else (d.get("music") or {}).get("flat"))}
         # music only sounds under blocks whose style has a bed: with none, the chosen track was silent
         # everywhere — give the plain-speech blocks the light bed (one undo step reverts both)
         if not any(build.STYLES.get(a.get("style") or build.DEFAULT_STYLE, {}).get("bed") is not None for a in d["tracks"]["audio"]):
@@ -528,15 +543,196 @@ def delete_preset(pid: str):
 def build_now():
     p = proj()
     gate(p)
+    live_preview(p)
     return build.schedule(p, S().queue, "draft", 0, on_done=lambda st: bump()).public()
 
 
 @router.post("/api/quick/export")
-def export():
+def export(profile: str = "final"):
     p = proj()
     gate(p)
+    if profile not in ("final", "master"):
+        raise HTTPException(400, "профиль: final или master")
     # the export alone does not reach the knowledge base: «Завершить проект» does (kb.finish)
-    return build.schedule(p, S().queue, "final", 0, on_done=lambda st: bump()).public()
+    return build.schedule(p, S().queue, profile, 0, on_done=lambda st: bump()).public()
+
+
+# ---------------------------------------------------------------- live infographic (the brand reference's single layer)
+
+
+def live_preview(p) -> None:
+    """The live-monitor preview of the layer (640×360, half rate, VP9 alpha) — rendered by script when it changed."""
+    from . import live
+    d = model.current(p)
+    j = live.preview_job(p, d) if d else None
+    if not j or (Path(j["out"]) / "index.json").exists():
+        return
+    q = S().queue
+    for x in q.active():
+        if x.kind == "qlive-preview" and x.status == "queued":
+            q.cancel(x.id)
+    jf = Path(j["out"] + ".json")
+    jf.parent.mkdir(parents=True, exist_ok=True)
+    jf.write_text(json.dumps(j, ensure_ascii=False), encoding="utf-8")
+    from ..config import CUTROOM_HELPERS, PYTHON
+    q.add(Job(kind="qlive-preview", label="Живая инфографика: превью слоя для монитора", lane="prerender", priority=8, expected=20,
+              cmd=[str(PYTHON), str(CUTROOM_HELPERS / "gfx_live.py"), str(jf)],
+              on_done=lambda job: (live.prune_previews(p, j["out"]), bump())))
+
+
+@router.get("/api/quick/live")
+def live_get():
+    from . import live
+    p = proj()
+    d = model.current(p)
+    return live.status(p, d) if d else {"on": False}
+
+
+class LiveBuildReq(BaseModel):
+    page: int | None = None         # the presentation slide it is built from (the reference: slide 21, the roadmap)
+    request: str | None = None      # the person's notes («с 0:18 до 0:25 полный слайд…»), timecodes of the current cut
+
+
+@router.post("/api/quick/live/build")
+def live_build(req: LiveBuildReq):
+    """The live layer agent (Opus): the slide + the whole speech of the current cut → one layer spec."""
+    p = proj()
+    gate(p)
+    doc_or_409(p)
+
+    def run(job: Job):
+        live_agent(p, job, req.page, req.request)
+        bump()
+
+    return S()._agent_job("qlive", "Живая инфографика: агент собирает слой по слайду и речи", run).public()
+
+
+def live_agent(p, job: Job, page: int | None, request: str | None) -> dict:
+    from .. import agent
+    from . import live
+    from .slides import page_of
+    d = model.current(p)
+    ws = live.words(p, d)
+    if not ws:
+        raise RuntimeError("Нет расшифровки под звуком монтажа — элементы не к чему привязать.")
+    prev = (d.get("live") or {}).get("spec")
+    pg = page_of(d, int(page)) if page else None
+    if pg is None and prev and (d.get("live") or {}).get("page"):
+        pg = page_of(d, int(d["live"]["page"]))
+    parts = ["Спецификация живого слоя инфографики на весь ролик."]
+    images = None
+    if pg:
+        parts.append(agent.wrap_data(f"слайд {pg['n']} презентации: текст", pg.get("text") or "(текстового слоя нет — смотри картинку слайда)"))
+        if not pg.get("text"):
+            images = [Path(pg["image"])]
+    pres = d.get("presentation") or {}
+    if pres.get("pages"):
+        parts.append(agent.wrap_data("все слайды (кратко)", "\n".join(f"{x['n']}: {(x.get('text') or '(картинка)')[:120]}" for x in pres["pages"])))
+    parts.append(agent.wrap_data("речь готового ролика с таймкодами", live.speech(ws)))
+    parts.append(agent.wrap_data("ракурсы по времени", "\n".join(f"{model.fmt(a)}–{model.fmt(b)} {model.ROLE_NAMES.get(r, r)}" for a, b, r in live.angles(p, d))))
+    if prev:
+        parts.append(agent.wrap_data("прошлая версия спецификации", json.dumps(prev, ensure_ascii=False)))
+    if request:
+        parts.append(agent.wrap_data("просьба человека", request))
+    job.log.append("агент живого слоя думает…")
+    spec: agent.LiveSpec = agent.run("live", "\n\n".join(parts), timeout=900, log_dir=p.edit, images=images)  # type: ignore[assignment]
+    with cards.lock:
+        d = model.current(p)
+        d, warn = live.set_spec(p, d, spec.model_dump(), None)
+        if pg:
+            d["live"]["page"] = pg["n"]
+        model.save(p, d, "ai", ("ИИ: живая инфографика" + (f" — {request[:60]}" if request else "")))
+    try:   # the asset index (waits in the project until it is finished — see kb.py)
+        from .. import kb
+        sd = spec.model_dump()
+        kb.index_graphic(p, "live", {"type": "live", "title": sd["title"], "items": sd["cards"], "months": [m["label"] for m in sd["months"]],
+                                     "windows": len(sd["windows"]), "intro": bool(sd["intro"]), "cta": bool(sd["cta"])}, "live", {}, "quick")
+    except Exception:  # noqa: BLE001
+        pass
+    job.note = (spec.note or "слой собран") + (f" · {len(warn)} предупр." if warn else "")
+    for w in warn:
+        job.log.append(w)
+    schedule_build(p, 0.3)
+    return d["live"]
+
+
+class LivePut(BaseModel):
+    spec: dict | None = None        # hand edits of the spec (texts, words, times); null = remove the layer
+    subtitles: bool | None = None
+
+
+@router.put("/api/quick/live")
+def live_put(req: LivePut):
+    from .. import agent
+    from . import live
+    p = proj()
+    gate(p)
+    with cards.lock:
+        d = doc_or_409(p)
+        if req.spec is None and req.subtitles is None:
+            live.clear(d)
+            note = "живая инфографика: убрана"
+        else:
+            spec = req.spec if req.spec is not None else dict((d.get("live") or {}).get("spec") or {})
+            if not spec:
+                raise HTTPException(409, "Живого слоя ещё нет: соберите его по слайду.")
+            if req.subtitles is not None:
+                spec["subtitles"] = req.subtitles
+            try:
+                spec = agent.LiveSpec.model_validate(spec).model_dump()
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(400, f"Спецификация не читается: {str(e)[:200]}") from e
+            d, warn = live.set_spec(p, d, spec)
+            note = "живая инфографика: правка" + (" (субтитры)" if req.subtitles is not None and req.spec is None else "")
+        model.save(p, d, "user", note)
+    schedule_build(p, 0.3)
+    bump()
+    return {**payload(p), "live_status": live.status(p, model.current(p))}
+
+
+@router.get("/media/quick/live/index")
+def media_live_index():
+    from . import live
+    p = proj()
+    d = model.current(p)
+    f = live.preview_file(p, d) if d else None
+    if not f:
+        raise HTTPException(404, "превью слоя ещё рисуется")
+    return {"key": Path(f).name, **json.loads((Path(f) / "index.json").read_text(encoding="utf-8"))}
+
+
+@router.get("/media/quick/live/frame/{key}/{k}")
+def media_live_frame(key: str, k: int):
+    if not key.isalnum():
+        raise HTTPException(400)
+    f = qdir(proj()) / "live" / "preview" / key / f"{int(k):05d}.png"
+    if not f.is_file():
+        raise HTTPException(404, "нет кадра")
+    return FileResponse(f, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/media/quick/live/still")
+def media_live_still(t: float = 0.0):
+    """One frame of the layer at film second t (960×540) — the poster in the panel."""
+    import subprocess
+    from ..config import CUTROOM_HELPERS, PYTHON
+    from . import live
+    p = proj()
+    d = model.current(p)
+    lay, _ = live.layer(p, d) if d else (None, [])
+    if not lay:
+        raise HTTPException(404, "живого слоя нет")
+    import hashlib
+    key = hashlib.sha1(json.dumps([lay, round(t, 2)], sort_keys=True).encode()).hexdigest()[:16]
+    out = qdir(p) / "live" / "stills" / f"{key}.png"
+    if not out.exists():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        jf = out.with_suffix(".json")
+        jf.write_text(json.dumps({"layer": lay, "t": t, "w": 960, "h": 540, "out": str(out)}, ensure_ascii=False), encoding="utf-8")
+        r = subprocess.run([str(PYTHON), str(CUTROOM_HELPERS / "gfx_live.py"), "--still", str(jf)], capture_output=True, text=True)
+        if r.returncode != 0 or not out.exists():
+            raise HTTPException(500, f"кадр слоя не получился: {(r.stderr or r.stdout)[-200:]}")
+    return _file(out, "image/png")
 
 
 @router.get("/api/quick/log")

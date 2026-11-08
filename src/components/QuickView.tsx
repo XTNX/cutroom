@@ -324,6 +324,7 @@ function Pane({ role, active, v, f, fps, flash }: { role: "front" | "top" | "sid
           className={cls("absolute pointer-events-none", slide.layout === "full" ? "inset-0 w-full h-full object-contain bg-[#FFF9EB]" : "right-[3.6%] top-1/2 -translate-y-1/2 w-[46%] rounded-[6px] shadow-lg")} />
       )}
       {active && card?.status === "ready" && card.files && <CardOverlay id={card.id} v={card.files.v} />}
+      {active && q.data?.live?.on && q.data.live.preview && <LiveOverlay pkey={q.data.live.preview} />}
       {active && <Sound f={f} fps={fps} />}
       {active && <Music f={f} fps={fps} />}
       {flash && (
@@ -348,6 +349,29 @@ function Pane({ role, active, v, f, fps, flash }: { role: "front" | "top" | "sid
  *  playback. The animated card is in «Собранное превью» and the export. */
 function CardOverlay({ id, v }: { id: string; v: number }) {
   return <img key={`${id}${v}`} src={quickUrl(`/media/quick/card/${id}/poster?v=${v}`)} alt="" className="absolute inset-0 w-full h-full object-contain pointer-events-none" />;
+}
+
+/** The live infographic in the live monitor: its PNG stills swapped by time (4 per second), never a
+ *  second video over the cameras. The exact layer is in «Собранное превью» and the export. */
+const liveIndex = new Map<string, { fps: number; t0: number; frames: number[] }>();
+function LiveOverlay({ pkey }: { pkey: string }) {
+  const time = useQuick((s) => s.time);
+  const [ix, setIx] = useState(liveIndex.get(pkey) ?? null);
+  useEffect(() => {
+    if (liveIndex.has(pkey)) { setIx(liveIndex.get(pkey)!); return; }
+    api.get<{ key: string; fps: number; t0: number; frames: number[] }>("/media/quick/live/index")
+      .then((r) => { liveIndex.set(r.key, r); if (r.key === pkey) setIx(r); }).catch(() => {});
+  }, [pkey]);
+  if (!ix || !ix.frames.length) return null;
+  const i = Math.max(0, Math.min(ix.frames.length - 1, Math.floor((time - ix.t0) * ix.fps)));
+  const k = ix.frames[i];
+  const next = ix.frames[Math.min(ix.frames.length - 1, i + 2)];
+  return (
+    <>
+      <img src={quickUrl(`/media/quick/live/frame/${pkey}/${k}`)} alt="" className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
+      {next !== k && <link rel="prefetch" href={quickUrl(`/media/quick/live/frame/${pkey}/${next}`)} />}
+    </>
+  );
 }
 
 /** The speech under the playhead: the sound block's source (lav proxy or camera) at its own time. */

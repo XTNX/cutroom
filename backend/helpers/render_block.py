@@ -31,6 +31,11 @@ PAD = "0x454335"   # letterbox colour for portrait clips: the brand's khaki inst
 def encode_args(j: dict) -> list[str]:
     from fractions import Fraction
     gop = str(max(1, round(float(Fraction(j["rate"])) * 2)))
+    if j.get("codec") == "hevc10":   # the 4K master: HEVC Main10
+        if j["encoder"] == "h264_nvenc":
+            return ["-c:v", "hevc_nvenc", "-preset", "p6", "-cq", "20", "-rc", "vbr", "-b:v", "0", "-profile:v", "main10", "-bf", "0", "-g", gop, "-tag:v", "hvc1"]
+        return ["-c:v", "libx265", "-preset", "medium", "-crf", "19", "-g", gop, "-tag:v", "hvc1",
+                "-x265-params", f"profile=main10:open-gop=0:bframes=0:keyint={gop}:log-level=error"]
     if j["encoder"] == "h264_nvenc":
         q = ["-preset", "p2", "-cq", "30"] if j["quality"] == "draft" else ["-preset", "p5", "-cq", "21"]
         return ["-c:v", "h264_nvenc", *q, "-rc", "vbr", "-b:v", "0", "-profile:v", "high", "-bf", "0", "-g", gop]
@@ -68,14 +73,24 @@ def build(j: dict, hw_decode: bool) -> list[str]:
         parts.append(f"[{k}:v]format=rgba,scale={w}:{h}:force_original_aspect_ratio=decrease,setpts=PTS-STARTPTS+{off:.4f}/TB[o{k}]")
         parts.append(f"{cur}[o{k}]overlay=x=(W-w)/2:y=(H-h)/2:eof_action=pass:enable='between(t,{off:.4f},{off + odur:.4f})'[v{k}]")
         cur = f"[v{k}]"
-    parts.append(f"{cur}format=yuv420p,trim=end_frame={n}[out]")
+    pf = ("p010le" if j["encoder"] == "h264_nvenc" else "yuv420p10le") if j.get("codec") == "hevc10" else "yuv420p"
+    parts.append(f"{cur}format={pf},trim=end_frame={n}[out]")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", rate, "-fps_mode", "cfr",
-            *encode_args(j), "-pix_fmt", "yuv420p", "-video_track_timescale", "90000", j["out"]]
+            *encode_args(j), "-pix_fmt", pf, "-video_track_timescale", "90000", j["out"]]
     return cmd
+
+
+def live_slices(j: dict) -> None:
+    """The live infographic slice of this segment is drawn first, if it isn't cached yet."""
+    for ov in j.get("overlays") or []:
+        if ov.get("live") and not Path(ov["file"]).exists():
+            from gfx_live import render as draw_live
+            draw_live(ov["live"])
 
 
 def main() -> None:
     j = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    live_slices(j)
     out = Path(j["out"])
     out.parent.mkdir(parents=True, exist_ok=True)
     part = out.with_name(out.stem + ".part" + out.suffix)
