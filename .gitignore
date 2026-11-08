@@ -12,3 +12,4 @@ build/cutroom-home.txt
 # simple-workflow plugin artifacts (local-only; delete entries to share via git)
 .simple-workflow/
 .simple-workflow
+*.tsbuildinfo
