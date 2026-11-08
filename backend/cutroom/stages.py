@@ -176,7 +176,8 @@ def render_preview_cmd(project) -> list[str]:
     if not e:
         raise RuntimeError("EDL ещё нет")
     moved = project.relink()
-    used = {r["source"] for r in e["ranges"]} | {r["angle"] for r in e["ranges"] if r.get("angle")}
+    used = ({r["source"] for r in e["ranges"]} | {r["angle"] for r in e["ranges"] if r.get("angle")}
+            | {r["picture"]["source"] for r in e["ranges"] if r.get("picture")})
     gone = project.missing_sources(used)
     if gone:
         names = ", ".join(Path(project.sources[s]["path"]).name for s in gone)

@@ -315,7 +315,10 @@ def resolve_ranges(project, edl: dict) -> list[dict]:
         src, a, b = r["source"], r["start"], r["end"]
         vsrc, va = src, a
         ang = r.get("angle")
-        if ang and ang != src and ang in eff and src in eff and eff[ang][0] == eff[src][0]:
+        pic = r.get("picture")   # cutaway from a clip not synced with the take (quick mode)
+        if pic and pic.get("source") in project.sources:
+            vsrc, va = pic["source"], float(pic["start"])
+        elif ang and ang != src and ang in eff and src in eff and eff[ang][0] == eff[src][0]:
             vsrc, va = ang, a + eff[src][1] - eff[ang][1]
         item = {"source": vsrc, "start": round(va, 3), "end": round(va + (b - a), 3), "out_start": r.get("out_start", 0),
                 "beat": r.get("beat", ""), "quote": r.get("quote", ""), "reason": r.get("reason", "")}

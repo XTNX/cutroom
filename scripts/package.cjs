@@ -35,7 +35,7 @@ console.log("2/4 сборка папки пакета");
 fs.rmSync(stage, { recursive: true, force: true });
 copy(path.join(out, "win-unpacked"), path.join(stage, "app"));
 fs.writeFileSync(path.join(stage, "app", "resources", "cutroom-home.txt"), "AUTO");   // home = two levels above Cutroom.exe
-for (const f of ["cutroom", "helpers", "prompts"]) copy(path.join(root, "backend", f), path.join(stage, "backend", f));
+for (const f of ["cutroom", "helpers", "prompts", "assets"]) copy(path.join(root, "backend", f), path.join(stage, "backend", f));
 for (const f of ["pyproject.toml", "uv.lock"]) fs.copyFileSync(path.join(root, "backend", f), path.join(stage, "backend", f));
 copy(path.join(root, "vendor", "video-use"), path.join(stage, "vendor", "video-use"));
 const uvPath = execFileSync("where", ["uv"], { encoding: "utf8" }).split(/\r?\n/)[0].trim();

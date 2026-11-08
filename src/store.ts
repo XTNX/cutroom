@@ -5,6 +5,7 @@ import { api, type AudioInfo, type EdlRange, type EdlState, type Job, type Marke
 export type LeftTab = "sources" | "transcript" | "problems" | "markers";
 export type RightTab = "strategy" | "gfx" | "color" | "subs" | "sound" | "export";
 export type View = "edit" | "system";
+export type AppMode = "quick" | "full";
 
 type Layout = { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean };
 const DEFAULT_LAYOUT: Layout = { left: 300, right: 320, bottom: 240, leftOpen: true, rightOpen: true };
@@ -20,6 +21,7 @@ type State = {
   time: number;
   playing: boolean;
   view: View;
+  appMode: AppMode;               // quick (block timeline, 4 steps) or full (the original studio)
   leftTab: LeftTab;
   rightTab: RightTab;
   queueOpen: boolean;
@@ -77,6 +79,7 @@ export const useStore = create<State>((set, get) => ({
   time: 0,
   playing: false,
   view: "edit",
+  appMode: "full",
   leftTab: "sources",
   rightTab: "strategy",
   queueOpen: false,
@@ -110,6 +113,7 @@ export const useStore = create<State>((set, get) => ({
     set({ project: p, sources: p.sources ?? [] });
     if (p.dir) window.cutroom?.setProjectDir(p.dir);
     get().loadSync(); get().loadStrategy(); get().loadEdl(); get().loadMarkers(); get().loadAudio();
+    if (p.open) api.get<{ mode: AppMode }>("/api/quick").then((q) => set({ appMode: q.mode })).catch(() => {});
     const sel = get().selected;
     if (p.sources?.length && (!sel || !p.sources.find((s) => s.id === sel))) {
       get().select(p.sources.find((s) => !s.duplicate_of)?.id ?? p.sources[0].id);

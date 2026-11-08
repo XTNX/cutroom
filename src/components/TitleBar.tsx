@@ -10,6 +10,31 @@ const WAVES = [
   { n: 3 as const, name: "Финал", hint: "Исходное разрешение, loudnorm, self-eval" },
 ];
 
+/** Quick ⇄ Full: the server carries the project over both ways (quick/convert.py). */
+function ModeSwitch() {
+  const mode = useStore((s) => s.appMode);
+  const go = async (to: "quick" | "full") => {
+    if (to === mode) return;
+    try {
+      if (to === "quick") await api.post("/api/quick/create", {});
+      await api.post("/api/quick/switch", { to });
+      useStore.setState({ appMode: to });
+      await useStore.getState().refreshProject();
+    } catch (e) { useStore.getState().say("err", (e as Error).message); }
+  };
+  return (
+    <nav className="nodrag flex items-center rounded-[6px] border border-line-strong overflow-hidden ml-2" aria-label="Режим">
+      {(["quick", "full"] as const).map((m) => (
+        <button key={m} onClick={() => go(m)} title={m === "quick" ? "Быстрый режим: 4 шага, правки блоками" : "Полный режим: все инструменты"}
+          className={cls("h-7 px-3 text-[12px] font-medium border-r border-line-strong last:border-r-0",
+            mode === m ? "bg-accent-soft text-accent" : "text-dim hover:text-fg hover:bg-panel-3")}>
+          {m === "quick" ? "Быстрый" : "Полный"}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export function TitleBar() {
   const project = useStore((s) => s.project);
   const wave = useStore((s) => s.wave);
@@ -36,7 +61,9 @@ export function TitleBar() {
         <span className="truncate text-dim max-w-[260px]" title={project?.dir}>{project?.open ? project.name : "без проекта"}</span>
       </div>
 
-      <nav className="nodrag flex items-center rounded-[6px] border border-line-strong overflow-hidden ml-2" aria-label="Волна конвейера">
+      {project?.open && <ModeSwitch />}
+
+      {useStore.getState().appMode === "full" && <nav className="nodrag flex items-center rounded-[6px] border border-line-strong overflow-hidden ml-2" aria-label="Волна конвейера">
         {WAVES.map((w) => (
           <button
             key={w.n}
@@ -48,7 +75,7 @@ export function TitleBar() {
             <span className="mono mr-1.5 opacity-70">{w.n}</span>{w.name}
           </button>
         ))}
-      </nav>
+      </nav>}
 
       <div className="flex-1" />
 

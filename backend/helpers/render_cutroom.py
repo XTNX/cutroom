@@ -62,7 +62,10 @@ def composite(base: Path, overlays: list[dict], out: Path) -> None:
     inputs, parts, cur = ["-i", str(base)], [], "[0:v]"
     for i, ov in enumerate(overlays, start=1):
         t, end = float(ov["start_in_output"]), float(ov["start_in_output"]) + float(ov["duration"])
-        inputs += ["-i", str(ov["file"])]
+        if ov.get("image"):   # a still (slide from quick mode): looped for the window it's shown
+            inputs += ["-loop", "1", "-t", f"{end + 0.1:.3f}", "-i", str(ov["image"])]
+        else:
+            inputs += ["-i", str(ov["file"])]
         parts.append(f"[{i}:v]format=rgba,scale={w}:{h}:force_original_aspect_ratio=decrease,setpts=PTS-STARTPTS+{t}/TB[a{i}]")
         parts.append(f"{cur}[a{i}]overlay=x=(W-w)/2:y=(H-h)/2:eof_action=pass:enable='between(t,{t:.3f},{end:.3f})'[v{i}]")
         cur = f"[v{i}]"

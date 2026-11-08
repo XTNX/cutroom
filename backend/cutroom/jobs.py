@@ -28,6 +28,8 @@ LANES = {
     "render": 1,  # heavy renders never run in parallel with each other
     "agent": 2,   # Claude calls (strategy, editor, fragment)
     "slots": 4,   # infographic slot agents — all in parallel (video-use Hard Rule 10)
+    "blocks": 2,  # quick mode: per-block segment renders (NVENC allows several sessions)
+    "assemble": 1,  # quick mode: stream-copy assembly + sound
 }
 
 _ids = itertools.count(1)

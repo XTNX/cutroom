@@ -88,12 +88,51 @@ def build_spec(project, job: Job, sid: str, request: str | None = None) -> dict:
         parts.append(agent.wrap_data("пожелание человека", request))
     job.log.append(f"агент слота {sid} думает…")
     try:
-        spec: agent.SlotSpec = agent.run("slot", "\n\n".join(parts), timeout=300, log_dir=project.edit)  # type: ignore[assignment]
+        spec = ask_spec(project, parts)
     except Exception as ex:
         update_slot(project, sid, {"status": "error", "error": str(ex)[:300]}, None)
         raise
     return update_slot(project, sid, {"spec": spec.model_dump(), "type": spec.type, "status": "working"},
                        f"инфографика {sid}: {spec.type} «{spec.title[:30]}»" + (f" ({request[:30]})" if request else ""))
+
+
+def ask_spec(project, parts: list[str], images: list[Path] | None = None) -> "agent.SlotSpec":
+    """The slot agent: context in, one card spec out (shared by full and quick mode)."""
+    return agent.run("slot", "\n\n".join(parts), timeout=300, log_dir=project.edit, images=images)  # type: ignore[return-value]
+
+
+def draw(job: Job | None, spec: dict, brand: dict, duration: float, fps: float, base: Path, poster_only: bool = False) -> dict:
+    """gfx_render.py into a fresh versioned folder under `base`; returns the file paths."""
+    d = base / f"v{int(time.time() * 1000)}"
+    d.mkdir(parents=True)
+    (d / "spec.json").write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
+    (d / "brand.json").write_text(json.dumps(brand, ensure_ascii=False, indent=1), encoding="utf-8")
+    cmd = [str(PYTHON), str(CUTROOM_HELPERS / "gfx_render.py"), str(d), "--fps", f"{fps:.4f}", "--duration", f"{duration:.2f}"]
+    if poster_only:
+        cmd.append("--poster-only")
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                         env=subprocess_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if job is not None:
+        job._proc = p
+    tail = []
+    for line in p.stdout:
+        line = line.strip()
+        if line.startswith("PROGRESS ") and job is not None:
+            job.progress = float(line.split()[1])
+        elif line and not line.startswith("PROGRESS"):
+            tail.append(line)
+    if p.wait() != 0:
+        raise RuntimeError((tail[-1] if tail else "ошибка рендера")[:300])
+    v = int(d.name[1:])
+    if poster_only:
+        return {"poster": str(d / "poster.png"), "v": v}
+    return {"render": str(d / "render.mov"), "preview": str(d / "preview.webm"), "poster": str(d / "poster.png"), "v": v}
+
+
+def prune(base: Path, keep: set[str]) -> None:
+    for old in base.glob("v*"):   # older drawings: best effort (one may still be open)
+        if old.is_dir() and str(old) not in keep:
+            shutil.rmtree(old, ignore_errors=True)
 
 
 def render(project, job: Job, sid: str) -> dict:
@@ -104,32 +143,15 @@ def render(project, job: Job, sid: str) -> dict:
     # every drawing gets its own folder: the verified render or the monitor may still be reading the
     # previous files (Windows locks open files), and the browser never shows a cached old card
     base = slot_dir(project, sid)
-    d = base / f"v{int(time.time() * 1000)}"
-    d.mkdir()
-    (d / "spec.json").write_text(json.dumps(slot["spec"], ensure_ascii=False, indent=1), encoding="utf-8")
-    (d / "brand.json").write_text(json.dumps(brand_of(e), ensure_ascii=False, indent=1), encoding="utf-8")
     first = next(iter(e["ranges"]), None)
     fps = (((project.sources.get(first["source"], {}) if first else {}).get("probe") or {}).get("video") or {}).get("fps") or 25
-    cmd = [str(PYTHON), str(CUTROOM_HELPERS / "gfx_render.py"), str(d), "--fps", f"{fps:.4f}", "--duration", f"{slot.get('duration', 5):.2f}"]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                         env=subprocess_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    job._proc = p
-    tail = []
-    for line in p.stdout:
-        line = line.strip()
-        if line.startswith("PROGRESS "):
-            job.progress = float(line.split()[1])
-        elif line:
-            tail.append(line)
-    if p.wait() != 0:
-        msg = (tail[-1] if tail else "ошибка рендера")[:300]
-        update_slot(project, sid, {"status": "error", "error": msg}, None)
-        raise RuntimeError(msg)
-    files = {"render": str(d / "render.mov"), "preview": str(d / "preview.webm"), "poster": str(d / "poster.png"), "v": int(time.time() * 1000)}
+    try:
+        files = draw(job, slot["spec"], brand_of(e), float(slot.get("duration", 5)), fps, base)
+    except RuntimeError as ex:
+        update_slot(project, sid, {"status": "error", "error": str(ex)}, None)
+        raise
     out = update_slot(project, sid, {"status": "ready", "files": files, "error": None}, None)
-    for old in base.glob("v*"):   # older drawings: best effort (one may still be open)
-        if old != d and old.is_dir():
-            shutil.rmtree(old, ignore_errors=True)
+    prune(base, {str(Path(files["render"]).parent)})
     return out
 
 

@@ -122,6 +122,9 @@ export const gfxUrl = (id: string, kind: "poster" | "preview", v: string | numbe
 export const musicUrl = (id: string) => `${base}/media/music/${encodeURIComponent(id)}?t=${token}`;
 export const sampleUrl = (name: string, bust: string | number) => `${base}/media/sample/${name}?t=${token}&v=${bust}`;
 
+/** Any backend media path with the token appended (quick mode: previews, cards, slides, auditions). */
+export const backendUrl = (path: string) => `${base}${path}${path.includes("?") ? "&" : "?"}t=${token}`;
+
 export const mediaUrl = (kind: "proxy" | "thumb", id: string, bust = "") =>
   `${base}/media/${kind}/${encodeURIComponent(id)}?t=${token}${bust ? `&v=${bust}` : ""}`;
 

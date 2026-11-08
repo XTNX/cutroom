@@ -15,6 +15,7 @@ import { Welcome } from "./components/Welcome";
 import { CommandPalette, runCommand } from "./components/CommandPalette";
 import { Toast } from "./components/Toast";
 import { SetupView, useSetup } from "./components/SetupView";
+import { QuickView } from "./components/QuickView";
 
 export function App() {
   const ready = useStore((s) => s.ready);
@@ -22,6 +23,7 @@ export function App() {
   const project = useStore((s) => s.project);
   const view = useStore((s) => s.view);
   const layout = useStore((s) => s.layout);
+  const appMode = useStore((s) => s.appMode);
   const setupState = useSetup();
 
   useEffect(() => {
@@ -48,9 +50,12 @@ export function App() {
             const was = new Map(prev.map((j) => [j.id, j.status]));
             if ((m.jobs as Job[]).some((j) => ["slot", "slot-render", "preview"].includes(j.kind) && was.get(j.id) !== j.status
               && ["running", "done", "error", "blocked"].includes(j.status))) useStore.getState().loadEdl();
+            // quick mode: blocks, cards and builds change the document on the server
+            if ((m.jobs as Job[]).some((j) => j.kind.startsWith("q") && was.get(j.id) !== j.status)) window.dispatchEvent(new Event("cutroom-dirty"));
           } else if (m.type === "sources_dirty" && m.v !== lastSrc) {
             lastSrc = m.v;
             useStore.getState().refreshSources().catch(() => {});
+            window.dispatchEvent(new Event("cutroom-dirty"));
           }
         },
         (up) => useStore.setState({ online: up }),
@@ -127,6 +132,8 @@ export function App() {
         <SystemView />
       ) : !project?.open ? (
         <Welcome />
+      ) : appMode === "quick" ? (
+        <QuickView />
       ) : (
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="flex-1 min-h-0 flex">

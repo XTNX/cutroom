@@ -47,6 +47,12 @@ app = FastAPI(title="Cutroom", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+from .quick import routes as quick_routes  # noqa: E402  (quick mode: /api/quick/*)
+
+quick_routes.bind(sys.modules[__name__])
+app.include_router(quick_routes.router)
+
+
 @app.middleware("http")
 async def auth(request: Request, call_next):
     if request.method == "OPTIONS" or request.url.path == "/health":

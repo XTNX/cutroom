@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1920, 1080
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-FONT_DIRS = [Path("C:/Windows/Fonts"), Path("/usr/share/fonts/truetype/dejavu")]
+FONT_DIRS = [Path(__file__).resolve().parent.parent / "assets" / "fonts", Path("C:/Windows/Fonts"), Path("/usr/share/fonts/truetype/dejavu")]
 DEFAULT_BRAND = {"bg": "#0b0c10", "panel": "#14161c", "fg": "#f3f2ee", "muted": "#9aa1ad", "accent": "#e8a33d",
                  "accent2": "#5b8def", "font": "segoeui.ttf", "font_bold": "seguisb.ttf"}
 
@@ -48,12 +48,18 @@ def rgb(h: str, a: int = 255) -> tuple:
 
 
 def load_font(name: str, size: int) -> ImageFont.FreeTypeFont:
+    name, _, weight = name.partition("@")   # "Font[wght].ttf@800": a weight of a variable font
     for d in [Path(name).parent if Path(name).is_absolute() else None, *FONT_DIRS]:
         if d is None:
             continue
         p = Path(name) if Path(name).is_absolute() else d / name
         if p.exists():
             f = ImageFont.truetype(str(p), size)
+            if weight:
+                try:
+                    f.set_variation_by_axes([int(weight)])
+                except (OSError, ValueError):
+                    pass
             # fonts fail silently: make sure Cyrillic really renders (not .notdef boxes)
             if f.getmask("Жщ").getbbox() is None or f.getbbox("Ж") == f.getbbox("\uffff"):
                 raise SystemExit(f"Шрифт {p.name} не содержит кириллицу — выберите другой")
@@ -98,13 +104,48 @@ def fmt_num(v: float, unit: str = "") -> str:
     if v is None:
         return ""
     s = f"{v:,.0f}" if abs(v) >= 100 or float(v).is_integer() else f"{v:,.1f}"
-    s = s.replace(",", "\u202f").replace(".", ",")
+    s = s.replace(",", "\u00a0").replace(".", ",")   # no-break space: brand fonts have it, not U+202F
     return f"{s}{(' ' + unit) if unit and not unit.startswith('%') else unit}"
+
+
+FALLBACK = {"₽": "руб.", "→": "—", " ": " ", " ": " "}
+
+
+def glyph_safe(spec, font_names: list[str]):
+    """Characters a brand font doesn't have would render as boxes: swap them for plain equivalents."""
+    try:
+        from fontTools.ttLib import TTFont
+    except ImportError:
+        return spec
+    missing = set()
+    for name in font_names:
+        p = Path(name.partition("@")[0])
+        p = p if p.is_absolute() else next((d / p for d in FONT_DIRS if (d / p).exists()), None)
+        if not p or not p.exists():
+            continue
+        cmap = TTFont(str(p), lazy=True).getBestCmap()
+        missing |= {ch for ch in FALLBACK if ord(ch) not in cmap}
+    if not missing:
+        return spec
+
+    def fix(v):
+        if isinstance(v, str):
+            for ch in missing:
+                v = v.replace(ch, FALLBACK[ch])
+            return v
+        if isinstance(v, list):
+            return [fix(x) for x in v]
+        if isinstance(v, dict):
+            return {k: fix(x) for k, x in v.items()}
+        return v
+    return fix(spec)
 
 
 class Ctx:
     def __init__(self, spec: dict, brand: dict, duration: float):
-        self.s, self.b, self.dur = spec, {**DEFAULT_BRAND, **brand}, duration
+        b = {**DEFAULT_BRAND, **brand}
+        spec = glyph_safe(spec, [b["font"], b["font_bold"]])
+        self.s, self.b, self.dur = spec, b, duration
         self.f_title = load_font(self.b["font_bold"], 54)
         self.f_sub = load_font(self.b["font"], 30)
         self.f_body = load_font(self.b["font"], 36)
@@ -139,12 +180,13 @@ def draw_frame(c: Ctx, t: float) -> Image.Image:
     if kind == "title":
         _title_card(c, d, t, a)
         return im
-    d.rounded_rectangle((x0, y0s, x1, y1s), radius=28, fill=rgb(c.b["panel"], int(235 * a)))
-    d.rectangle((x0, y0s + 28, x0 + 8, y0s + 110), fill=rgb(c.b["accent"], int(255 * a)))
+    panel(c, im, d, (x0, y0s, x1, y1s), a)
     ta = a * ease_out((t - c.t_card * 0.6) / 0.4)
     pad = 56
     inner = x1 - x0 - 2 * pad
-    lines, ft = title_lines(d, c.s.get("title", ""), c.b["font_bold"], 54, inner)
+    title = c.s.get("title", "")
+    title = title.upper() if c.b.get("upper") else title
+    lines, ft = title_lines(d, title, c.b["font_bold"], 66 if c.b.get("upper") else 54, inner)
     lh = int(ft.size * 1.15)
     for i, ln in enumerate(lines):
         d.text((x0 + pad, y0s + 40 + i * lh), ln, font=ft, fill=rgb(c.b["fg"], int(255 * ta)))
@@ -159,6 +201,33 @@ def draw_frame(c: Ctx, t: float) -> Image.Image:
         na = a * ease_out((t - c.t_items[-1] - c.span * 0.6) / 0.4)
         d.text((area[0], y1s - 60), c.s["note"], font=fit(d, c.s["note"], c.b["font"], 30, area[2] - area[0]), fill=rgb(c.b["muted"], int(255 * na)))
     return im
+
+
+def panel(c: Ctx, im: Image.Image, d: ImageDraw.ImageDraw, box: tuple, a: float) -> None:
+    """The card: plain rounded panel, or the brand's corrugated board with a torn edge."""
+    x0, y0, x1, y1 = box
+    alpha = int((250 if c.b.get("confirmed") else 235) * a)
+    if c.b.get("edge") == "torn" or c.b.get("texture") == "stripes":
+        import random
+        rnd = random.Random(7)   # same tear on every frame
+        layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        top = [(x, y0 + rnd.randint(-9, 9)) for x in range(int(x0), int(x1) + 1, 22)]
+        bot = [(x, y1 + rnd.randint(-9, 9)) for x in range(int(x1), int(x0) - 1, -22)]
+        ld.polygon(top + bot, fill=rgb(c.b["panel"], 255))
+        if c.b.get("texture") == "stripes":   # corrugated cardboard: soft darker ribs, blended (not stamped) onto the board
+            ribs = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            rd = ImageDraw.Draw(ribs)
+            for x in range(int(x0), int(x1), 18):
+                rd.rectangle((x, y0 - 12, x + 8, y1 + 12), fill=rgb(c.b["fg"], 30))
+            layer.alpha_composite(ribs)
+        mask = Image.new("L", im.size, 0)
+        ImageDraw.Draw(mask).polygon(top + bot, fill=alpha)
+        layer.putalpha(mask)
+        im.alpha_composite(layer)
+    else:
+        d.rounded_rectangle(box, radius=28, fill=rgb(c.b["panel"], alpha))
+    d.rectangle((x0, y0 + 28, x0 + 8, y0 + 110), fill=rgb(c.b["accent"], int(255 * a)))
 
 
 def _k(c: Ctx, t: float, i: int) -> float:
@@ -297,6 +366,7 @@ def main() -> None:
     ap.add_argument("slot_dir", type=Path)
     ap.add_argument("--fps", type=float, default=25)
     ap.add_argument("--duration", type=float, default=6)
+    ap.add_argument("--poster-only", action="store_true", help="only poster.png (style variants)")
     args = ap.parse_args()
     sd = args.slot_dir
     spec = json.loads((sd / "spec.json").read_text(encoding="utf-8"))
@@ -304,6 +374,10 @@ def main() -> None:
     dur = max(2.5, args.duration)
     c = Ctx(spec, brand, dur)
     n = int(round(dur * args.fps))
+    if args.poster_only:
+        draw_frame(c, min(dur - 1.0, c.t_items[-1] + c.span)).save(sd / "poster.png")
+        print("PROGRESS 1.0\nDONE", flush=True)
+        return
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", f"{args.fps}", "-i", "-",
            "-map", "0", "-c:v", "png", "-pix_fmt", "rgba", str(sd / "render.part.mov"),
            "-map", "0", "-vf", "scale=960:-2", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", "0", "-crf", "34",
