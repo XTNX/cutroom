@@ -3,6 +3,7 @@ import { Icon } from "../icons";
 import { useStore } from "../store";
 import { cls } from "../util";
 import { ClaudeBadge } from "./ClaudeBadge";
+import { EmergencyExport } from "./EmergencyExport";
 
 const WAVES = [
   { n: 1 as const, name: "Черновик", hint: "Грубая нарезка, прокси 540p, плейсхолдеры инфографики" },
@@ -94,6 +95,7 @@ export function TitleBar() {
           {running > 0 && <span className="w-1.5 h-1.5 rounded-full bg-accent pulse" />}
           {failed > 0 && <span className="badge badge-err">{failed} ошиб.</span>}
         </button>
+        {project?.open && <EmergencyExport />}
         <ClaudeBadge />
         <button className={cls("btn btn-sm", view === "system" ? "" : "btn-ghost")} onClick={() => set({ view: view === "system" ? "edit" : "system" })}
           title="Железо, модели, ffmpeg">

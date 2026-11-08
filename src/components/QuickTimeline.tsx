@@ -160,6 +160,30 @@ export function QuickTimeline() {
         outline(box.x, box.w, r, v.id);
       }
     }
+    // camera switches: a dashed line through the camera rows + a flag on the ruler in the new camera's colour
+    {
+      const cams = (["front", "top", "side"] as const).map((k) => row(k)).filter(Boolean) as Row[];
+      const y0 = Math.min(...cams.map((r) => r.y)), y1 = Math.max(...cams.map((r) => r.y + r.h));
+      let prev: RowKey | null = null;
+      for (const v of d.tracks.video) {
+        const k = pictureRow(d, v);
+        if (prev && k !== prev) {
+          const x = Math.round(X(v.start)) + 0.5;
+          if (x >= LABEL_W && x <= size.w) {
+            const c = css(ROLE_COLOR[k]);
+            g.save();
+            g.strokeStyle = c; g.lineWidth = 2; g.setLineDash([4, 3]);
+            g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke();
+            g.setLineDash([]);
+            g.fillStyle = c;
+            g.beginPath(); g.moveTo(x - 5, RULER - 9); g.lineTo(x + 5, RULER - 9); g.lineTo(x, RULER - 2); g.closePath(); g.fill();
+            if (X(v.start + v.len) - x > 46) { g.font = "600 10px sans-serif"; g.fillText("→ " + ({ front: "Фронт", top: "Верх", side: "Сбоку" } as Record<string, string>)[k], x + 6, RULER - 3); }
+            g.restore();
+          }
+        }
+        prev = k;
+      }
+    }
     const rs = row("slides")!;
     for (const s of d.tracks.slides) {
       const box = frame(s, rs, css("--track-s"), `Слайд ${s.page}${s.layout === "full" ? " · весь кадр" : ""}`);

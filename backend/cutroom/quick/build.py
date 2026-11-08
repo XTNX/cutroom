@@ -418,6 +418,61 @@ def assemble(project, job: Job, profile: str, vid: int, rebuilt: list[str], on_d
     return stats
 
 
+def prerender(project, queue, profile: str = "final") -> int:
+    """Background pre-render: enqueue the missing segments of `profile` (no assembly, lowest priority).
+    After a draft is built, the 1080p blocks follow, so «Экспорт» and the emergency export only glue."""
+    doc = model.current(project)
+    if not doc or not doc["tracks"]["video"]:
+        return 0
+    n = 0
+    for s in missing(segments(project, doc, profile)):
+        jid = _active_hash.get(s["hash"])
+        if jid and any(j.id == jid for j in queue.active()):
+            continue
+        j = queue.add(Job(kind="qprerender", label=f"Пререндер {profile} · блок {s['block'] or 'пауза'}", lane="prerender", priority=35,
+                          source=s["block"], cmd=block_cmd(s), expected=max(1.5, s["frames"] / fps_of(doc) * 0.6)))
+        _active_hash[s["hash"]] = j.id
+        n += 1
+    return n
+
+
+def newest_preview(project) -> str | None:
+    fs = sorted(qdir(project).glob("preview_v*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+    return str(fs[0]) if fs else None
+
+
+def run_sync(project, profile: str = "final", log=print, workers: int = 2) -> dict:
+    """The whole build without the job queue and without any agent: render the missing segments
+    (render_block.py, `workers` at a time), then assemble. Used by the CLI and the emergency export."""
+    from concurrent.futures import ThreadPoolExecutor
+    doc = model.current(project)
+    if not doc or not doc["tracks"]["video"]:
+        raise RuntimeError("В быстром режиме нет монтажа — собирать нечего.")
+    if project.missing_sources({b["src"] for t in ("video", "audio") for b in doc["tracks"][t]}):
+        project.relink()
+    segs = segments(project, doc, profile)
+    need = missing(segs)
+    log(f"сегментов {len(segs)}, рендерить {len(need)}, из кэша {len(segs) - len(need)}")
+
+    def one(s: dict) -> str:
+        p = subprocess.run(block_cmd(s), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           env=subprocess_env(), creationflags=NOWIN)
+        if not s["file"].exists():   # (a background pre-render of the same segment may have won the race)
+            tail = [x for x in (p.stdout + p.stderr).splitlines() if x.strip()][-2:]
+            raise RuntimeError(f"блок {s['block'] or 'пауза'}: {' | '.join(tail)}")
+        return s["block"] or f"пауза@{s['start']}"
+
+    with ThreadPoolExecutor(max(1, workers)) as ex:
+        for i, name in enumerate(ex.map(one, need), start=1):
+            log(f"  [{i}/{len(need)}] {name}")
+    job = Job(kind="qassemble", label="сборка", lane="assemble")
+    stats = assemble(project, job, profile, doc["meta"]["version_id"], [s["block"] or f"пауза@{s['start']}" for s in need])
+    if not stats:
+        raise RuntimeError(job.note or "сборка не удалась")
+    log(job.note or "")
+    return stats
+
+
 def last(project, profile: str) -> dict | None:
     f = qdir(project) / "logs" / f"last_{profile}.json"
     try:

@@ -47,6 +47,11 @@ DEFAULTS: dict = {
     "theme": "dark",
     "claude_cli": None,          # explicit path to claude.exe; otherwise the newest desktop-app CLI
     "claude_auto_login": True,   # open the sign-in window at launch when not signed in
+    "agent_models": {},          # {role: model id} over agent.ROLE_MODELS (Opus heavy / Sonnet analysis / Haiku text)
+    "vault_path": None,          # Obsidian vault; otherwise the open vault from Obsidian's own list
+    "kb_folder": "Cutroom",      # folder inside the vault for render notes, the asset index, practices
+    "kb_agent_notes": True,
+    "prerender_final": True,     # after each draft build, pre-render the missing 1080p blocks (script, low priority)      # after a final render: Haiku + the Obsidian skills edit the notes (scripted notes always)
 }
 
 

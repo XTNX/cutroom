@@ -152,6 +152,11 @@ def render(project, job: Job, sid: str) -> dict:
         raise
     out = update_slot(project, sid, {"status": "ready", "files": files, "error": None}, None)
     prune(base, {str(Path(files["render"]).parent)})
+    try:
+        from . import kb
+        kb.index_graphic(project, sid, slot["spec"], "brand", files, "full")
+    except Exception:  # noqa: BLE001 — the index is best effort
+        pass
     return out
 
 

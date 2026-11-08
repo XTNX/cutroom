@@ -99,4 +99,9 @@ def draw(project, job: Job, oid: str) -> dict:
         raise
     out = patch_card(project, oid, {"status": "ready", "files": files, "error": None, "drawn_len": o["len"], "drawn_style": o.get("style")})
     gfx.prune(base, {str(Path(files["render"]).parent)} | {str(Path(v).parent) for v in (o.get("variants") or {}).values()})
+    try:
+        from .. import kb
+        kb.index_graphic(project, oid, o["spec"], o.get("style") or "cream", files, "quick")
+    except Exception:  # noqa: BLE001 — the index is best effort
+        pass
     return out or {}

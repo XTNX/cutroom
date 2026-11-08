@@ -91,16 +91,60 @@ def _secs(m) -> float:
     return int(m.group(1)) * 60 + float(m.group(2).replace(",", "."))
 
 
+COLOR_WORDS = [  # phrase → (temperature step, saturation factor); relative to what the block has now
+    (r"тепл(ее|ей|о)|потепле|желтее", 20, None), (r"холодн(ее|ей)|прохладн|синее|похолод", -20, None),
+    (r"насыщенн(ее|ей)|сочн(ее|ей)|ярче цвет|ярче краски|поярче", None, 1.15),
+    (r"бледн(ее|ей)|менее насыщ|приглуш(и|ить) цвет|спокойн(ее|ей) цвет|потуск", None, 0.87),
+]
+SOUND_WORDS = [("clean", r"чист(ая|ую) речь|без подложк|без музык"), ("light", r"подложк\w* (потише|тише|лёгк|легк)|лёгк\w* подложк|легк\w* подложк"),
+               ("bed", r"(на|под) музык|подложк\w* (громче|погромче)"), ("natural", r"как записано|без обработк")]
+CARD_WORDS = [("cream", r"крем"), ("orange", r"оранж"), ("khaki", r"хаки"), ("carton", r"картон")]
+
+
 def fast_parse(prompt: str, has_sel: bool) -> agent.QuickPlan | None:
+    """Plain requests become operations by script — no model call, no tokens, instant."""
     p = prompt.lower().strip()
     if len(p) > 140:
         return None
     ts = [_secs(m) for m in TS.finditer(p)]
-    if len(ts) not in (0, 2) or (not ts and not has_sel):
+    if len(ts) not in (0, 2):
         return None
     start, end = (min(ts), max(ts)) if ts else (None, None)
+    where = ("на выделенном отрезке" if has_sel else "во всём ролике") if start is None else f"с {model.fmt(start)} до {model.fmt(end)}"
     rest = TS.sub(" ", p)
     rest = re.sub(r"\b(с|до|по|от|на|и|только|оставь|оставить|поставь|сделай|переключи|ракурс|кадр|камера|камеру|вид|пожалуйста)\b|[–—\-,.!]", " ", rest)
+    # colour, sound, card style: fine without a selection (then the whole film)
+    if re.search(r"без цвета|сбрось цвет|убери цвет|исходн\w* цвет", p):
+        return agent.QuickPlan(summary=f"{where.capitalize()} — без цветокора.", ops=[agent.QuickOp(op="color", start=start, end=end, preset="none")])
+    from ..brand import presets
+    for pr in presets():
+        nm = pr["name"].lower()
+        if pr["id"] != "none" and (re.search(rf"(пресет|цвет)\w*\s+«?{re.escape(nm)}", p) or (nm == "бренд" and re.search(r"(цвет|пресет)\w* бренд|по бренд", p))):
+            return agent.QuickPlan(summary=f"{where.capitalize()} — цвет «{pr['name']}».", ops=[agent.QuickOp(op="color", start=start, end=end, preset=pr["id"])])
+    col = [(t, k) for rx, t, k in COLOR_WORDS if re.search(rx, p)]
+    if col and not re.search(r"карточк|слайд|звук|музык", p):
+        t = sum(x for x, _ in col if x) or None
+        k = next((y for _, y in col if y), None)
+        what = ", ".join(w for w, on in (("теплее", (t or 0) > 0), ("холоднее", (t or 0) < 0), ("насыщеннее", (k or 1) > 1), ("спокойнее по цвету", (k or 1) < 1)) if on)
+        return agent.QuickPlan(summary=f"{where.capitalize()} — {what}.",
+                               ops=[agent.QuickOp(op="color", start=start, end=end, temperature=t, saturation=k, text="relative")])
+    for style, rx in SOUND_WORDS:
+        if re.search(rx, p):
+            from .build import STYLES
+            return agent.QuickPlan(summary=f"{where.capitalize()} — звук «{STYLES[style]['label']}».",
+                                   ops=[agent.QuickOp(op="audio", start=start, end=end, style=style)])
+    if re.search(r"карточк", p) and not re.search(r"нов|добав|сделай карточк|по слайду", p):
+        st = next((k for k, rx in CARD_WORDS if re.search(rx, p)), None)
+        if st:
+            from ..brand import STYLES as CARD_STYLES
+            return agent.QuickPlan(summary=f"{where.capitalize()} — карточки в стиле «{CARD_STYLES[st]}».", ops=[agent.QuickOp(op="overlay_style", start=start, end=end, style=st)])
+    if not ts and not has_sel:
+        return None
+    m = re.search(r"слайд\w*\s*(?:№\s*)?(\d{1,3})", p)
+    if m and not re.search(r"карточк|инфограф", p):
+        full = bool(re.search(r"весь кадр|во весь|на весь|полн\w* экран|закро", p))
+        return agent.QuickPlan(summary=f"{where.capitalize()} — слайд {m.group(1)}{' во весь кадр' if full else ' панелью справа'}.",
+                               ops=[agent.QuickOp(op="slide", start=start, end=end, page=int(m.group(1)), style="full" if full else "")])
     if re.search(DELETE_WORDS, p) and not re.search(r"карточк|слайд|музык|цвет", p):
         left = re.sub(DELETE_WORDS, " ", rest).split()
         if not left or all(w in ("это", "кусок", "фрагмент", "отрезок", "участок") for w in left):
@@ -111,7 +155,6 @@ def fast_parse(prompt: str, has_sel: bool) -> agent.QuickPlan | None:
         left = re.sub("|".join(rx for _, rx in ANGLE_WORDS), " ", rest)
         left = left.split()
         if len(left) <= 2:
-            where = "на выделенном отрезке" if start is None else f"с {model.fmt(start)} до {model.fmt(end)}"
             return agent.QuickPlan(summary=f"{where.capitalize()} — ракурс «{ROLE_NAMES[hits[0]]}».",
                                    ops=[agent.QuickOp(op="angle", start=start, end=end, angle=hits[0])])
     return None
@@ -147,11 +190,17 @@ def apply_ops(project, doc: dict, plan_ops: list, sel: tuple[int, int] | None, r
         elif kind == "color":
             g = grade_of(o["preset"]) if o.get("preset") else None
             for v in ops.within(doc, "video", f0, f1):
-                base = json.loads(json.dumps(g if o.get("preset") else (v.get("color") or doc.get("grade") or {})))
+                if o.get("preset") == "none":   # explicitly untouched (not «fall back to the film's grade»)
+                    v["color"] = {"preset": "none"}
+                    continue
+                base = json.loads(json.dumps((g or {}) if o.get("preset") else (v.get("color") or doc.get("grade") or {})))
+                rel = o.get("text") == "relative"   # fast path: «теплее» adds to what the block has
                 if o.get("temperature") is not None:
-                    base["temperature"] = max(-100.0, min(100.0, float(o["temperature"])))
+                    t = float(o["temperature"]) + (float(base.get("temperature") or 0) if rel else 0)
+                    base["temperature"] = max(-100.0, min(100.0, t))
                 if o.get("saturation") is not None:
-                    base.setdefault("cdl", {})["sat"] = max(0.3, min(1.8, float(o["saturation"])))
+                    k = float(o["saturation"]) * (float((base.get("cdl") or {}).get("sat") or 1) if rel else 1)
+                    base.setdefault("cdl", {})["sat"] = max(0.3, min(1.8, k))
                 v["color"] = base or None
         elif kind == "audio":
             style = o.get("style") if o.get("style") in ("clean", "light", "bed", "natural") else "clean"

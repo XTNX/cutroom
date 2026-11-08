@@ -113,6 +113,7 @@ function StepSources() {
         <p className="text-dim text-[11.5px]">Перетащите файлы в нужный лоток. Вид сбоку — не «верх»: отметьте его ниже как «Сбоку».</p>
       </div>
       {busy && <p className="text-accent pulse">Готовлю файлы: прокси, расшифровка, синхронизация по звуку…</p>}
+      <KbStatus />
       <div>
         <H>Клипы проекта и их роль</H>
         <div className="space-y-1">
@@ -132,6 +133,38 @@ function StepSources() {
       <button className="btn btn-primary w-full justify-center" disabled={!vids.some((s) => roleFor(s) === "front")}
         onClick={async () => { await ensure(); q.set({ step: 2 }); }}>Дальше: нарезка</button>
     </>
+  );
+}
+
+type KbInfo = { info: { vault: string | null; kb: string | null; notes: number; renders: number; rules: number; skills: string[]; skills_missing: string[];
+  obsidian_skills: string[]; ref_render: string | null; when: string } | null; index: Record<string, number> };
+
+/** What the knowledge base gave this project: re-read at every project start. */
+function KbStatus() {
+  const jobs = useStore((s) => s.jobs);
+  const [kb, setKb] = useState<KbInfo | null>(null);
+  const job = jobs.filter((j) => j.kind === "kb").at(-1);
+  useEffect(() => { api.get<KbInfo>("/api/kb").then(setKb).catch(() => {}); }, [job?.status]);
+  const i = kb?.info;
+  const reading = job && (job.status === "running" || job.status === "queued");
+  return (
+    <div className="rounded-[8px] border border-line px-3 py-2 text-[11.5px]">
+      <div className="flex items-center gap-2">
+        <span className="text-fg flex-1">База знаний</span>
+        <button className="text-accent underline disabled:opacity-50" disabled={!!reading}
+          onClick={() => api.post("/api/kb/refresh", {}).catch((e) => useStore.getState().say("err", e.message))}>{reading ? "читаю…" : "перечитать"}</button>
+      </div>
+      {!i ? <p className="text-dim">{reading ? "Перечитываю заметки Obsidian…" : "Ещё не прочитана."}</p> : !i.vault ? (
+        <p className="text-warn">Хранилище Obsidian не найдено — укажите vault_path в настройках.</p>
+      ) : (
+        <div className="text-dim space-y-0.5 mt-0.5">
+          <p>Заметок {i.notes}, правил {i.rules}, прошлых рендеров {i.renders}{i.ref_render ? ` · цвет-референс: ${i.ref_render}` : ""}.</p>
+          <p>Ассеты: брендбук {kb?.index.brandbook ?? 0}, презентаций {kb?.index.presentation ?? 0}, графики {kb?.index.graphic ?? 0}.</p>
+          <p>Скиллы для агентов: {i.skills.length ? i.skills.join(", ") : "—"}{i.skills_missing.length ? <span className="text-warn"> · не установлены: {i.skills_missing.join(", ")}</span> : null}</p>
+          <p>Заметки после рендера: {i.obsidian_skills.length ? `скиллы ${i.obsidian_skills.join(", ")}` : <span className="text-warn">скиллы Obsidian для Claude не найдены — заметки пишет только скрипт</span>}</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -169,7 +202,28 @@ function StepCut() {
 
 // ---------------------------------------------------------------- 3. colour + sound
 
-type Preset = { id: string; name: string; grade: Grade | null; kind: "brand" | "ready" | "user" };
+type Preset = { id: string; name: string; grade: Grade | null; kind: "brand" | "ready" | "user" | "ref" };
+
+/** A graded still for a preset: shimmer while ffmpeg renders it, a retry if it fails. */
+function PresetThumb({ src }: { src: string }) {
+  const [st, setSt] = useState<"load" | "ok" | "err">("load");
+  const [n, setN] = useState(0);
+  useEffect(() => { setSt("load"); }, [src]);
+  return (
+    <div className="relative w-full aspect-video bg-black">
+      {st === "load" && <div className="absolute inset-0 shimmer grid place-items-center text-[10.5px] text-dim">кадр с цветом…</div>}
+      {st === "err" && (
+        <span role="button" tabIndex={0} className="absolute inset-0 grid place-items-center text-[10.5px] text-warn"
+          onClick={(e) => { e.stopPropagation(); setSt("load"); setN((x) => x + 1); }}>кадр не получился · повторить</span>
+      )}
+      <img key={n} src={n ? `${src}&r=${n}` : src} alt="" className={cls("w-full h-full object-cover", st !== "ok" && "opacity-0")}
+        onLoad={() => setSt("ok")} onError={() => setSt("err")} />
+    </div>
+  );
+}
+
+const sameGrade = (a: Grade | null | undefined, b: Grade | null | undefined) =>
+  JSON.stringify(a ?? null) === JSON.stringify(b ?? null) || (!a && b?.preset === "none") || (!b && a?.preset === "none");
 
 /** Apply a change to the video (or sound) blocks of the selection, or to the whole film. */
 function onSelection(d: QDoc, track: "video" | "audio", fn: (b: { id: string } & Record<string, unknown>) => void): [QDoc, string] {
@@ -210,6 +264,7 @@ function StepColorSound() {
     if (sat !== 1) out.cdl = { ...(out.cdl ?? {}), sat: +(((out.cdl?.sat ?? 1) * sat)).toFixed(3) };
     return out;
   };
+  const current = (v?.color ?? d.grade ?? null) as Grade | null;
   const applyGrade = async (p: Preset) => {
     const g = withAdjust(p.grade);
     if (r) {
@@ -244,9 +299,12 @@ function StepColorSound() {
         </p>
         <div className="grid grid-cols-2 gap-2">
           {presets.map((p) => (
-            <button key={p.id} disabled={locked || !v} onClick={() => applyGrade(p)} className="text-left rounded-[8px] border border-line hover:border-accent overflow-hidden bg-panel-2 disabled:opacity-50">
-              {v && <img src={frameUrl(v.src, at, withAdjust(p.grade), `${v.src}${Math.round(at)}${temp}${sat}`)} alt="" className="w-full aspect-video object-cover bg-black" loading="lazy" />}
-              <div className="px-2 py-1 text-[11.5px] truncate">{p.kind === "brand" ? "★ " : p.kind === "user" ? "• " : ""}{p.name}</div>
+            <button key={p.id} disabled={locked || !v} onClick={() => applyGrade(p)} title={p.kind === "ref" ? "Цвет последнего финального рендера из базы знаний" : p.name}
+              className={cls("text-left rounded-[8px] border overflow-hidden bg-panel-2 disabled:opacity-50", sameGrade(current, withAdjust(p.grade)) ? "border-accent ring-1 ring-accent" : "border-line hover:border-accent")}>
+              {v && <PresetThumb src={frameUrl(v.src, Math.round(at * 2) / 2, withAdjust(p.grade), "q") + "&w=480"} />}
+              <div className="px-2 py-1 text-[11.5px] truncate">
+                {sameGrade(current, withAdjust(p.grade)) ? "✓ " : p.kind === "brand" ? "★ " : p.kind === "ref" ? "↺ " : p.kind === "user" ? "• " : ""}{p.name}
+              </div>
             </button>
           ))}
         </div>
@@ -254,7 +312,7 @@ function StepColorSound() {
           <summary className="text-dim cursor-pointer">Тоньше и свой пресет</summary>
           <label className="flex items-center gap-2 mt-2">Тепло<input type="range" min={-50} max={50} value={temp} onChange={(e) => setTemp(+e.target.value)} className="flex-1 min-w-0" /><span className="w-8 text-right tabular-nums">{temp}</span></label>
           <label className="flex items-center gap-2">Насыщ.<input type="range" min={0.5} max={1.5} step={0.05} value={sat} onChange={(e) => setSat(+e.target.value)} className="flex-1 min-w-0" /><span className="w-8 text-right tabular-nums">{sat.toFixed(2)}</span></label>
-          <p className="text-dim text-[11.5px]">Ползунки добавляются к пресету, который вы нажмёте.</p>
+          <p className="text-dim text-[11.5px]">Ползунки добавляются к пресету, который вы нажмёте. Мониторы показывают цвет сразу (приближение), точный рендер блоков идёт в фоне.</p>
           <div className="flex gap-1.5 mt-1">
             <input className="input flex-1 h-7" value={name} onChange={(e) => setName(e.target.value)} placeholder="Имя пресета" />
             <button className="btn btn-sm" disabled={!name.trim()} onClick={save} title="Сохранить цвет текущего блока как пресет">Сохранить</button>

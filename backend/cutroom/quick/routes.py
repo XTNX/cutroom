@@ -86,8 +86,15 @@ def payload(p) -> dict:
 
 
 def schedule_build(p, delay: float = 1.2):
+    from ..config import load_settings
+
+    def done(st: dict):
+        bump()
+        if load_settings().get("prerender_final", True):   # script only: the 1080p blocks in the background
+            build.prerender(p, S().queue, "final")
+
     if model.current(p) and edl.strategy_approved(p):
-        build.schedule(p, S().queue, "draft", delay, on_done=lambda st: bump())
+        build.schedule(p, S().queue, "draft", delay, on_done=done)
 
 
 def card_jobs(p, oid: str, request: str | None = None, with_spec: bool = True) -> list[int]:
@@ -332,6 +339,11 @@ def presentation(req: PathReq):
         d["presentation"] = import_presentation(p, req.path)
     except SlideError as e:
         raise HTTPException(400, str(e)) from e
+    try:
+        from .. import kb
+        kb.index_presentation(p, d["presentation"])
+    except Exception:  # noqa: BLE001 — the index is best effort
+        pass
     model.save(p, d, "user", f"презентация: {d['presentation']['name']}")
     bump()
     return payload(p)
@@ -487,9 +499,15 @@ def build_now():
 
 @router.post("/api/quick/export")
 def export():
+    from .. import kb
     p = proj()
     gate(p)
-    return build.schedule(p, S().queue, "final", 0, on_done=lambda st: bump()).public()
+
+    def done(st: dict):
+        bump()
+        kb.after_render(p, st, "quick", queue=S().queue)   # notes by script, then the notes agent (Haiku)
+
+    return build.schedule(p, S().queue, "final", 0, on_done=done).public()
 
 
 @router.get("/api/quick/log")
@@ -542,8 +560,14 @@ def _file(path: str | Path | None, mt: str):
 
 @router.get("/media/quick/preview")
 def media_preview():
-    st = build.last(proj(), "draft")
-    return _file((st or {}).get("file"), "video/mp4")
+    """The assembled preview. If the recorded file is gone (a failed or interrupted build, a
+    locked old file), the newest preview that does exist is served — the monitor never goes black."""
+    p = proj()
+    st = build.last(p, "draft")
+    f = (st or {}).get("file")
+    if not f or not Path(f).is_file():
+        f = build.newest_preview(p)
+    return _file(f, "video/mp4")
 
 
 @router.get("/media/quick/export")
