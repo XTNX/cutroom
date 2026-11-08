@@ -33,6 +33,7 @@ type QState = {
   assembled: boolean;              // monitor shows the assembled preview file instead of the live proxies
   dialog: Dialog;
   overwrite: boolean;
+  ripple: boolean;                 // edge drags change the length and move the rest of the film (neighbours untouched)
   snap: boolean;
   set: (p: Partial<QState>) => void;
   load: () => Promise<void>;
@@ -42,7 +43,7 @@ type QState = {
 
 export const useQuick = create<QState>((set, get) => ({
   data: null, draft: null, propDoc: null, propCover: {}, sel: [], step: 1, time: 0, playing: false, assembled: false,
-  dialog: null, overwrite: false, snap: true,
+  dialog: null, overwrite: false, ripple: false, snap: true,
   set: (p) => set(p),
   load: async () => {
     const d = await api.get<QuickPayload>("/api/quick");

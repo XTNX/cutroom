@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, mediaUrl } from "../api";
 import { useStore } from "../store";
-import { closeGaps, edges, end, fpsOf, move, patch, snapFrame, total, trim, withLinked, type Block, type QDoc, type Ref, type TrackName, type VBlock, type ABlock, type OBlock, type SBlock } from "../quickOps";
+import { closeGaps, edges, end, fpsOf, move, patch, rippleTrim, roll, rollPartner, snapFrame, total, trim, withLinked, type Block, type QDoc, type Ref, type TrackName, type VBlock, type ABlock, type OBlock, type SBlock } from "../quickOps";
 import { qSeek, roleOf, shownCover, shownDoc, useQuick, fmtT, type Cover } from "../quickStore";
 import { quickUrl } from "./QuickView";
 
@@ -24,13 +24,16 @@ const pictureRow = (d: QDoc, v: VBlock): RowKey => { const r = roleOf(d, v.src);
 type Drag =
   | { kind: "scrub" }
   | { kind: "move"; refs: Ref[]; x0: number; base: QDoc; moved: boolean }
-  | { kind: "trim"; ref: Ref; edge: "start" | "end"; x0: number; base: QDoc }
+  | { kind: "trim"; ref: Ref; edge: "start" | "end"; x0: number; base: QDoc; mode?: TrimMode; hint?: string; hx?: number }
   | { kind: "band"; x0: number; y0: number; x1: number; y1: number; add: boolean }
   | { kind: "angle"; ids: string[]; role: string; x0: number }
   | { kind: "fade"; ref: Ref; side: "in" | "out"; base: QDoc }
   | null;
 type Hover = { id: string; edge?: "start" | "end"; fade?: "in" | "out" } | null;
 const cmd = (c: string) => window.dispatchEvent(new CustomEvent("quick-cmd", { detail: c }));
+
+type TrimMode = "roll" | "ripple" | "overwrite" | "trim";
+const ROW_NAME: Record<string, string> = { front: "Фронт", top: "Верх", side: "Сбоку" };
 
 const imgs = new Map<string, HTMLImageElement>();
 function img(url: string, onload: () => void): HTMLImageElement | null {
@@ -282,6 +285,16 @@ export function QuickTimeline() {
       g.fillRect(bx, by, Math.abs(dr.x1 - dr.x0), Math.abs(dr.y1 - dr.y0));
       g.strokeRect(bx + 0.5, by + 0.5, Math.abs(dr.x1 - dr.x0), Math.abs(dr.y1 - dr.y0));
     }
+    // edge drag: what it does and the lengths it gives
+    if (dr?.kind === "trim" && dr.hint && dr.hx !== undefined) {
+      g.font = "600 11px 'IBM Plex Sans', 'Segoe UI', sans-serif";
+      const w = g.measureText(dr.hint).width + 12;
+      const hx = Math.max(LABEL_W, Math.min(size.w - w - 2, dr.hx + 10));
+      g.fillStyle = dr.mode === "roll" ? css("--cam2") : dr.mode === "ripple" ? css("--accent") : dr.mode === "overwrite" ? css("--warn") : css("--panel-3");
+      g.beginPath(); g.roundRect(hx, RULER + 2, w, 18, 4); g.fill();
+      g.fillStyle = dr.mode === "trim" ? css("--fg") : "#fff";
+      g.fillText(dr.hint, hx + 6, RULER + 15);
+    }
     // playhead
     const px = X(q.time * fps);
     if (px >= LABEL_W) {
@@ -315,6 +328,9 @@ export function QuickTimeline() {
     if (!d || !r || x < LABEL_W) return { row: r, frame: F(x) };
     const f = F(x);
     if (r.key === "front" || r.key === "top" || r.key === "side") {
+      // at an angle switch the cut can be grabbed from either camera row: an edge of this row's own block wins
+      const po = pick(d.tracks.video.filter((b) => pictureRow(d, b) === r.key), x);
+      if (po?.edge) return { ref: { track: "video", id: po.b.id }, edge: po.edge, row: r };
       const p = pick(d.tracks.video, x);
       const v = p?.b as VBlock | undefined;
       if (!v) return { row: r, frame: f };
@@ -350,6 +366,22 @@ export function QuickTimeline() {
     return best;
   };
 
+  /** What the edge drag does right now, with the resulting lengths. */
+  const trimHint = (nd: QDoc, ref: Ref, partner: Ref | null, mode: TrimMode, edge: "start" | "end"): string => {
+    const b = (nd.tracks[ref.track] as Block[]).find((x) => x.id === ref.id);
+    if (!b) return "";
+    const sec = (n: number) => `${(n / fps).toFixed(1)} с`;
+    const name = (x: Block) => ref.track === "video" ? ROW_NAME[pictureRow(nd, x as VBlock)] : "";
+    if (mode === "roll" && partner) {
+      const o = nd.tracks.video.find((x) => x.id === partner.id)!;
+      const [l, r] = edge === "end" ? [b, o] : [o, b];
+      return `Стык: ${name(l)} ${sec(l.len)} | ${name(r)} ${sec(r.len)} · звук не меняется`;
+    }
+    if (mode === "ripple") return `${name(b) || "Блок"} ${sec(b.len)} · остальное сдвигается, соседи целы · ролик ${fmtT(total(nd) / fps)}`;
+    if (mode === "overwrite") return `${name(b) || "Блок"} ${sec(b.len)} · заменяет соседа`;
+    return `${name(b) || "Блок"} ${sec(b.len)} · до соседа (Ctrl — со сдвигом)`;
+  };
+
   // ---------------------------------------------------------------- pointer
   const pos = (e: React.PointerEvent | React.MouseEvent) => {
     const rc = cv.current!.getBoundingClientRect();
@@ -368,6 +400,11 @@ export function QuickTimeline() {
       return;
     }
     if (h.ghost) { drag.current = { kind: "angle", ids: [h.ref.id], role: h.ghost, x0: x }; return; }
+    if (h.edge && e.ctrlKey && !e.shiftKey && !locked) {   // Ctrl on an edge = length with shift, not multi-select
+      useQuick.setState({ sel: [h.ref] });
+      drag.current = { kind: "trim", ref: h.ref, edge: h.edge, x0: x, base: d };
+      return;
+    }
     const isSel = q.sel.some((s) => s.id === h.ref.id);
     let sel = q.sel;
     if (e.ctrlKey || e.shiftKey) sel = isSel ? q.sel.filter((s) => s.id !== h.ref.id) : [...q.sel, h.ref];
@@ -388,7 +425,10 @@ export function QuickTimeline() {
       const c = cv.current!;
       c.style.cursor = y < RULER ? "col-resize" : "ref" in h ? (h.ghost ? "pointer" : h.fade ? "ew-resize" : h.edge ? (h.edge === "start" ? "w-resize" : "e-resize") : "grab") : "default";
       c.title = "ref" in h ? (h.fade ? "Фейд: тяните вбок (до упора — без фейда)"
-        : h.edge ? (withLinked(d, [h.ref]).length > 1 ? "Тяните край: блок и связанные с ним звук или картинка вместе" : "Тяните край: подрезать или растянуть")
+        : h.edge ? (rollPartner(d, h.ref, h.edge) && !e.ctrlKey && !q.ripple && !q.overwrite
+          ? "Стык ракурсов: тяните — меняется длина обоих ракурсов, звук остаётся. Ctrl — длина со сдвигом остального ролика, Alt — с заменой"
+          : (withLinked(d, [h.ref]).length > 1 ? "Тяните край: блок и связанные с ним звук или картинка вместе" : "Тяните край: подрезать или растянуть")
+            + ". Ctrl (или «Сдвиг») — длина без замены соседа: остальное сдвигается. Alt — с заменой")
         : h.ghost ? "Клик — показать этот ракурс" : "") : "";
       const nh: Hover = "ref" in h && !h.ghost ? { id: h.ref.id, edge: h.edge, fade: h.fade } : null;
       if (JSON.stringify(nh) !== JSON.stringify(hover.current)) { hover.current = nh; redraw(); }
@@ -420,7 +460,19 @@ export function QuickTimeline() {
         const s = snapFrame(p, [...edges(dr.base, new Set([b.id])), Math.round(q.time * fps)], Math.max(1, Math.round(8 / view.current.pps * fps)));
         delta += s - p;
       }
-      useQuick.setState({ draft: trim(dr.base, dr.ref, dr.edge, delta, srcDur, overwrite) });
+      const ripple = e.ctrlKey || q.ripple;
+      const partner = rollPartner(dr.base, dr.ref, dr.edge);
+      const mode: TrimMode = overwrite ? "overwrite" : ripple ? "ripple" : partner ? "roll" : "trim";
+      let nd: QDoc;
+      if (mode === "roll") {
+        const [l, r] = dr.edge === "end" ? [dr.ref, partner!] : [partner!, dr.ref];
+        nd = roll(dr.base, l, r, delta, srcDur);
+      } else if (mode === "ripple") nd = rippleTrim(dr.base, dr.ref, dr.edge, delta, srcDur);
+      else nd = trim(dr.base, dr.ref, dr.edge, delta, srcDur, overwrite);
+      dr.mode = mode;
+      dr.hx = x;
+      dr.hint = trimHint(nd, dr.ref, partner, mode, dr.edge);
+      useQuick.setState({ draft: nd });
     }
   };
 
@@ -470,7 +522,10 @@ export function QuickTimeline() {
       return;
     }
     const overwrite = e.altKey || q.overwrite;
-    await useQuick.getState().commit(draft, dr.kind === "move" ? (overwrite ? "перенос с заменой" : "перенос") : (overwrite ? "растяжка с заменой" : "подрезка"));
+    const m = dr.kind === "trim" ? dr.mode : undefined;
+    const note = dr.kind === "move" ? (overwrite ? "перенос с заменой" : "перенос")
+      : m === "roll" ? "длина ракурса (стык)" : m === "ripple" ? "длина со сдвигом" : m === "overwrite" ? "растяжка с заменой" : "подрезка";
+    await useQuick.getState().commit(draft, note);
   };
 
   const onDouble = (e: React.MouseEvent) => {
@@ -513,6 +568,8 @@ export function QuickTimeline() {
           title="Короткие фейды (0,12 с) там, где звуковые блоки стыкуются: убирают щелчки и скачок громкости. С выделением — только у выделенных. Точнее — тяните кружки в верхних углах звукового блока">Фейды на склейках</button>
         <span className="w-px h-4 bg-line mx-1" />
         <button className="chip" aria-pressed={q.overwrite} onClick={() => q.set({ overwrite: !q.overwrite })} title="Перенос и растяжка заменяют то, на что ложится блок (или держите Alt)">Перезапись</button>
+        <button className="chip" aria-pressed={q.ripple} onClick={() => q.set({ ripple: !q.ripple })}
+          title="Длина блока меняется без замены соседнего: всё после него сдвигается (или держите Ctrl, перетаскивая край)">Сдвиг</button>
         <button className="chip" aria-pressed={q.snap} onClick={() => q.set({ snap: !q.snap })} title="Прилипание к краям блоков и бегунку">Прилипание</button>
         <span className="w-px h-4 bg-line mx-1" />
         <button className="btn btn-ghost btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("quick-cmd", { detail: "undo" }))} disabled={!q.data?.history.can_undo || !!q.propDoc} title="Ctrl+Z">Отменить</button>
