@@ -110,11 +110,11 @@ def gfx_brand(style: str = "cream") -> dict:
     cream, orange, khaki = c["cream"], c["orange"], c["khaki"]
     base = {"font": body, "font_bold": head, "font_accent": accent_font, "upper": bool(f.get("heading")), "confirmed": b["found"]}
     if style == "orange":   # on orange: khaki, bold
-        return {**base, "panel": orange, "fg": khaki, "muted": _mix(khaki, orange, 0.72), "accent": khaki, "accent2": cream}
+        return {**base, "panel": orange, "fg": khaki, "muted": _mix(khaki, orange, 0.9), "accent": khaki, "accent2": cream}   # brand: on orange — khaki, so the small text is near-solid khaki
     if style == "khaki":    # on khaki: cream text, orange only large
         return {**base, "panel": khaki, "fg": cream, "muted": _mix(cream, khaki, 0.7), "accent": orange, "accent2": cream}
     if style == "carton":   # corrugated orange board with a torn edge
-        return {**base, "panel": orange, "fg": khaki, "muted": _mix(khaki, orange, 0.72), "accent": khaki, "accent2": cream,
+        return {**base, "panel": orange, "fg": khaki, "muted": _mix(khaki, orange, 0.9), "accent": khaki, "accent2": cream,
                 "texture": "stripes", "edge": "torn"}
     # cream: khaki text, orange only as shapes
     return {**base, "panel": cream, "fg": khaki, "muted": _mix(khaki, cream, 0.68), "accent": orange, "accent2": khaki}

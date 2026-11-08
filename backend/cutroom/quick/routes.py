@@ -58,6 +58,18 @@ def set_mode(p, m: str) -> None:
     mode_path(p).write_text(json.dumps({"mode": m}), encoding="utf-8")
 
 
+# background renders of each mode: the mode that is switched off stops its own and starts none
+QUICK_RENDERS = {"qplan", "qblock", "qassemble", "qprerender"}
+FULL_RENDERS = {"preview"}
+
+
+def stop_renders(kinds: set[str]) -> None:
+    q = S().queue
+    for j in q.active():
+        if j.kind in kinds:
+            q.cancel(j.id)
+
+
 def gate(p) -> None:
     if not edl.strategy_approved(p):
         raise HTTPException(423, "Сначала шаг 2: нарезка по промпту и «Применить» (это утверждение стратегии, Hard Rule 11).")
@@ -82,7 +94,8 @@ def payload(p) -> dict:
             "proposal": ai.summary_of(ai.load_proposal(p)), "coverage": cov,
             "build": {"draft": build.last(p, "draft"), "final": build.last(p, "final")},
             "brand": {"found": b["found"], "need": b["need"], "colors": b["colors"], "note": b["note"]},
-            "styles": {k: v["label"] for k, v in build.STYLES.items()}}
+            "styles": {k: v["label"] for k, v in build.STYLES.items()},
+            "beds": {k: v["bed"] for k, v in build.STYLES.items()}}
 
 
 def schedule_build(p, delay: float = 1.2):
@@ -90,10 +103,10 @@ def schedule_build(p, delay: float = 1.2):
 
     def done(st: dict):
         bump()
-        if load_settings().get("prerender_final", True):   # script only: the 1080p blocks in the background
+        if load_settings().get("prerender_final", True) and get_mode(p) == "quick":   # script only: the 1080p blocks in the background
             build.prerender(p, S().queue, "final")
 
-    if model.current(p) and edl.strategy_approved(p):
+    if model.current(p) and edl.strategy_approved(p) and get_mode(p) == "quick":
         build.schedule(p, S().queue, "draft", delay, on_done=done)
 
 
@@ -147,6 +160,7 @@ def create(req: CreateReq):
         if req.roles:
             d["roles"] = {k: v for k, v in req.roles.items() if v in model.ROLES}
         model.save(p, d, "user", note)
+    stop_renders(FULL_RENDERS)
     set_mode(p, "quick")
     return payload(p)
 
@@ -246,6 +260,9 @@ def _move(step: int):
 # ---------------------------------------------------------------- AI
 
 
+PREP_KINDS = {"probe", "proxy", "audio", "asr", "peaks", "pack", "sync"}
+
+
 class CutReq(BaseModel):
     prompt: str
 
@@ -258,6 +275,10 @@ def cut(req: CutReq):
         raise HTTPException(400, "Опишите, какой ролик нужен.")
     if not any(model.role(model.current(p), p, s) in ("front", "top", "side") for s in p.sources):
         raise HTTPException(409, "Отметьте хотя бы одну камеру как «Фронт» (шаг 1).")
+    if any(j.kind in PREP_KINDS for j in S().queue.active()):
+        raise HTTPException(409, "Файлы ещё готовятся (прокси, расшифровка, синхронизация по звуку). Нарезка станет доступна, когда подготовка закончится.")
+    if not (p.edit / "takes_packed.md").exists():
+        raise HTTPException(409, "Расшифровки ещё нет: дождитесь, пока на шаге 1 закончится подготовка файлов.")
 
     def run(job: Job):
         ai.run_cut(p, job, req.prompt)
@@ -328,6 +349,13 @@ def cancel_proposal():
 
 class PathReq(BaseModel):
     path: str
+
+
+@router.get("/api/quick/presentations/kb")
+def kb_presentation_list():
+    """PDFs in the knowledge base, for «Из базы знаний» next to the presentation tray."""
+    from .slides import kb_presentations
+    return {"items": kb_presentations()}
 
 
 @router.post("/api/quick/presentation")
@@ -449,6 +477,12 @@ def put_music(req: MusicReq):
         if not t:
             raise HTTPException(404, "трек не найден на полке")
         d["music"] = {"track": t["id"], "path": t["path"], "title": t.get("title") or Path(t["path"]).stem}
+        # music only sounds under blocks whose style has a bed: with none, the chosen track was silent
+        # everywhere — give the plain-speech blocks the light bed (one undo step reverts both)
+        if not any(build.STYLES.get(a.get("style") or build.DEFAULT_STYLE, {}).get("bed") is not None for a in d["tracks"]["audio"]):
+            for a in d["tracks"]["audio"]:
+                if (a.get("style") or build.DEFAULT_STYLE) == "clean":
+                    a["style"] = "light"
     else:
         d["music"] = None
     model.save(p, d, "user", "музыка: " + ((d["music"] or {}).get("title") or "без музыки"))
@@ -526,8 +560,10 @@ def switch(req: SwitchReq):
             gate(p)
             e = to_full(p, d)
             edl.save_version(p, e, "quick", f"из быстрого режима v{d['meta']['version_id']}")
-            S().schedule_preview(p)
+        stop_renders(QUICK_RENDERS)
         set_mode(p, "full")
+        if d and d["tracks"]["video"]:
+            S().schedule_preview(p)
     else:
         e = edl.current(p)
         d = model.current(p)
@@ -538,7 +574,9 @@ def switch(req: SwitchReq):
         elif d is None:
             from .convert import project_rate
             model.save(p, model.empty(project_rate(p)), "user", "новый проект")
+        stop_renders(FULL_RENDERS)
         set_mode(p, "quick")
+        schedule_build(p, 0.3)
     bump()
     return payload(p)
 

@@ -50,7 +50,60 @@ def import_presentation(project, path: str) -> dict:
         pages.append({"n": i, "image": str(img), "thumb": str(thumb), "text": text})
     if not pages:
         raise SlideError("В PDF нет страниц.")
-    return {"file": str(p), "name": p.name, "dir": str(d), "pages": pages}
+    # slides that are pictures (no text layer): the text the team wrote down in the knowledge base
+    note = None
+    if not any(x["text"] for x in pages):
+        note, texts = kb_slide_texts(p)
+        for x in pages:
+            if texts.get(x["n"]):
+                x["text"], x["text_src"] = texts[x["n"]][:1200], "kb"
+    return {"file": str(p), "name": p.name, "dir": str(d), "pages": pages, "text_note": note}
+
+
+def _vault_files(pattern: str) -> list[Path]:
+    from ..brand import vault_path
+    v = vault_path()
+    if not v:
+        return []
+    return [f for f in v.rglob(pattern) if not ({".obsidian", ".trash", "99 Архив"} & set(f.parts))]
+
+
+def kb_presentations() -> list[dict]:
+    """PDF presentations in the knowledge base (the Obsidian vault), newest first."""
+    # a «Презентации» folder first, then the newest
+    fs = sorted(_vault_files("*.pdf"), key=lambda f: (not any("резентац" in x for x in f.parts), -f.stat().st_mtime))
+    return [{"path": str(f), "name": f.name, "folder": f.parent.name} for f in fs[:40]]
+
+
+_ROW = __import__("re").compile(r"^\|\s*(\d{1,3})\s*\|(.+)\|\s*$")
+
+
+def kb_slide_texts(pdf: Path) -> tuple[str | None, dict[int, str]]:
+    """A vault note that mentions this PDF and lists its slides as a table «| № | title | content |»
+    → {slide number: "title. content"}. The note with the most numbered rows wins."""
+    import re
+    best: tuple[str | None, dict[int, str]] = (None, {})
+    keys = {pdf.name.lower(), pdf.stem.lower()}
+    for f in _vault_files("*.md"):
+        try:
+            t = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not any(k in t.lower() for k in keys):
+            continue
+        rows: dict[int, str] = {}
+        for line in t.splitlines():
+            m = _ROW.match(line.strip())
+            if not m:
+                continue
+            cells = [re.sub(r"\*\*|\[\[|\]\]|`", "", c).strip() for c in m.group(2).split("|")]
+            cells = [c for c in cells if c]
+            n = int(m.group(1))
+            if cells and n not in rows:
+                rows[n] = ". ".join(cells)
+        if len(rows) > len(best[1]):
+            best = (f.stem, rows)
+    return best
 
 
 def page_of(doc: dict, n: int) -> dict | None:

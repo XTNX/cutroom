@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, frameUrl, mediaUrl, type Track } from "../api";
 import { useStore } from "../store";
 import { clone, end, fpsOf, split, type Grade, type QDoc } from "../quickOps";
@@ -40,6 +40,24 @@ const TRAYS: { role: string; label: string; hint: string }[] = [
   { role: "top", label: "Верх", hint: "вид на стол сверху" },
   { role: "lav", label: "Петличка", hint: "звук: WAV, AAC, MP3" },
 ];
+
+/** «Из базы» next to the presentation tray: the PDFs in the Obsidian knowledge base. */
+function KbPresentations({ onPick }: { onPick: (path: string) => void }) {
+  const [items, setItems] = useState<{ path: string; name: string; folder: string }[] | null>(null);
+  const open = async () => {
+    try { setItems((await api.get<{ items: { path: string; name: string; folder: string }[] }>("/api/quick/presentations/kb")).items); }
+    catch (e) { useStore.getState().say("err", (e as Error).message); }
+  };
+  if (!items) return <button className="btn btn-sm" onClick={open} title="PDF из базы знаний (Obsidian)">Из базы</button>;
+  if (!items.length) return <span className="text-dim text-[11.5px]">в базе нет PDF</span>;
+  return (
+    <select className="input h-7 text-[11.5px] w-[150px]" defaultValue="" aria-label="Презентация из базы знаний"
+      onChange={(e) => { if (e.target.value) { onPick(e.target.value); setItems(null); } }}>
+      <option value="" disabled>из базы знаний…</option>
+      {items.map((x) => <option key={x.path} value={x.path} title={x.path}>{x.name} · {x.folder}</option>)}
+    </select>
+  );
+}
 
 function StepSources() {
   const sources = useStore((s) => s.sources);
@@ -93,6 +111,14 @@ function StepSources() {
   const pres = d?.presentation;
   // a sound-only file without an explicit role is a lav (same default as the server)
   const roleFor = (s: (typeof vids)[number]) => d?.roles?.[s.id] ?? (s.kind === "audio" ? "lav" : "other");
+  // a project opened from a folder already has its files: prepare them too (once per set of unprepared files)
+  const unprepared = vids.filter((s) => !s.missing && (!s.has.transcript || (s.kind === "video" && !s.has.proxy))).map((s) => s.id).join(",");
+  const prepared = useRef("");
+  useEffect(() => {
+    if (!unprepared || busy || prepared.current === unprepared) return;
+    prepared.current = unprepared;
+    prepare().catch((e) => useStore.getState().say("err", (e as Error).message));
+  }, [unprepared, busy]);
 
   return (
     <>
@@ -103,10 +129,11 @@ function StepSources() {
             <div className="flex-1 min-w-0">
               <div className="text-fg">{t.label}</div>
               <div className="text-dim text-[11.5px]">
-                {t.role === "presentation" ? (pres ? `${pres.name}: ${pres.pages.length} слайд.` : t.hint)
+                {t.role === "presentation" ? (pres ? `${pres.name}: ${pres.pages.length} слайд.${pres.text_note ? " · текст слайдов из базы знаний" : ""}` : t.hint)
                   : `${vids.filter((s) => roleFor(s) === t.role).length} файл. · ${t.hint}`}
               </div>
             </div>
+            {t.role === "presentation" && <KbPresentations onPick={(path) => addFiles([path], "presentation")} />}
             <button className="btn btn-sm" onClick={() => pick(t.role)}>Добавить</button>
           </div>
         ))}
@@ -212,6 +239,7 @@ function StepCut() {
   const [prompt, setPrompt] = useState("");
   const job = jobs.filter((j) => j.kind === "qcut").at(-1);
   const running = job && (job.status === "running" || job.status === "queued");
+  const preparing = jobs.some((j) => ["proxy", "audio", "asr", "peaks", "pack", "sync"].includes(j.kind) && (j.status === "running" || j.status === "queued"));
   const go = async () => {
     try { await api.post("/api/quick/cut", { prompt }); } catch (e) { useStore.getState().say("err", (e as Error).message); }
   };
@@ -222,8 +250,8 @@ function StepCut() {
         <H>Что за ролик</H>
         <textarea className="input w-full py-2 leading-snug resize-y" style={{ height: 140 }} value={prompt} onChange={(e) => setPrompt(e.target.value)}
           placeholder="Например: ролик на 2 минуты о том, как устроен рынок. Когда раскладывают предметы или пишут на столе — показывай верх, остальное время фронт. Без оговорок." />
-        <button className="btn btn-primary w-full justify-center mt-2" onClick={go} disabled={!prompt.trim() || !!running}>
-          {running ? `ИИ режет… ${job?.eta ? `~${Math.ceil(job.eta)} с` : ""}` : d?.tracks.video.length ? "Нарезать заново" : "Нарезать"}
+        <button className="btn btn-primary w-full justify-center mt-2" onClick={go} disabled={!prompt.trim() || !!running || preparing}>
+          {running ? `ИИ режет… ${job?.eta ? `~${Math.ceil(job.eta)} с` : ""}` : preparing ? "Файлы ещё готовятся…" : d?.tracks.video.length ? "Нарезать заново" : "Нарезать"}
         </button>
         {job?.status === "error" && <p className="text-err mt-1">{job.error}</p>}
       </div>
@@ -244,7 +272,9 @@ type Preset = { id: string; name: string; grade: Grade | null; kind: "brand" | "
 function PresetThumb({ src }: { src: string }) {
   const [st, setSt] = useState<"load" | "ok" | "err">("load");
   const [n, setN] = useState(0);
-  useEffect(() => { setSt("load"); }, [src]);
+  useEffect(() => { setSt("load"); setN(0); }, [src]);
+  // the server turns stills away while its queue is long: ask again by itself a few times
+  const failed = () => { if (n < 5) window.setTimeout(() => setN((x) => x + 1), 2000); else setSt("err"); };
   return (
     <div className="relative w-full aspect-video bg-black">
       {st === "load" && <div className="absolute inset-0 shimmer grid place-items-center text-[10.5px] text-dim">кадр с цветом…</div>}
@@ -253,7 +283,7 @@ function PresetThumb({ src }: { src: string }) {
           onClick={(e) => { e.stopPropagation(); setSt("load"); setN((x) => x + 1); }}>кадр не получился · повторить</span>
       )}
       <img key={n} src={n ? `${src}&r=${n}` : src} alt="" className={cls("w-full h-full object-cover", st !== "ok" && "opacity-0")}
-        onLoad={() => setSt("ok")} onError={() => setSt("err")} />
+        onLoad={() => setSt("ok")} onError={failed} />
     </div>
   );
 }
@@ -285,11 +315,15 @@ function StepColorSound() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const load = () => api.get<{ presets: Preset[]; brand: typeof brand }>("/api/quick/presets").then((r) => { setPresets(r.presets); setBrand(r.brand); });
   useEffect(() => { load(); api.get<{ tracks: Track[] }>("/api/music").then((r) => setTracks(r.tracks)).catch(() => {}); }, []);
+  // the frame the preset thumbnails show: it holds still during playback — following the playhead asked the
+  // server for 5 new 4K stills every half second, and the queue starved the proxy stream (the picture froze)
+  const still = useRef<{ src: string; at: number } | null>(null);
   if (!d) return <p className="text-dim">Сначала нарезка (шаг 2).</p>;
   const fps = fpsOf(d);
   const f = Math.round(q.time * fps);
   const v = d.tracks.video.find((b) => f >= b.start && f < end(b)) ?? d.tracks.video[0];
   const at = v ? v.in + Math.max(0, f - v.start) / fps : 0;
+  if (v && (!q.playing || !still.current)) still.current = { src: v.src, at: Math.round(at * 2) / 2 };
   const r = selRange();
   const locked = !q.data?.gate_open || !!q.propDoc;
 
@@ -337,7 +371,7 @@ function StepColorSound() {
           {presets.map((p) => (
             <button key={p.id} disabled={locked || !v} onClick={() => applyGrade(p)} title={p.kind === "ref" ? "Цвет последнего финального рендера из базы знаний" : p.name}
               className={cls("text-left rounded-[8px] border overflow-hidden bg-panel-2 disabled:opacity-50", sameGrade(current, withAdjust(p.grade)) ? "border-accent ring-1 ring-accent" : "border-line hover:border-accent")}>
-              {v && <PresetThumb src={frameUrl(v.src, Math.round(at * 2) / 2, withAdjust(p.grade), "q") + "&w=480"} />}
+              {v && still.current && <PresetThumb src={frameUrl(still.current.src, still.current.at, withAdjust(p.grade), "q") + "&w=480"} />}
               <div className="px-2 py-1 text-[11.5px] truncate">
                 {sameGrade(current, withAdjust(p.grade)) ? "✓ " : p.kind === "brand" ? "★ " : p.kind === "ref" ? "↺ " : p.kind === "user" ? "• " : ""}{p.name}
               </div>

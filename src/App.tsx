@@ -48,7 +48,7 @@ export function App() {
             notifyFinished(prev, m.jobs as Job[]);
             // infographic slots and verified renders change the EDL/preview on the server: pull it once they land
             const was = new Map(prev.map((j) => [j.id, j.status]));
-            if ((m.jobs as Job[]).some((j) => ["slot", "slot-render", "preview"].includes(j.kind) && was.get(j.id) !== j.status
+            if (useStore.getState().appMode === "full" && (m.jobs as Job[]).some((j) => ["slot", "slot-render", "preview"].includes(j.kind) && was.get(j.id) !== j.status
               && ["running", "done", "error", "blocked"].includes(j.status))) useStore.getState().loadEdl();
             // quick mode: blocks, cards and builds change the document on the server
             if ((m.jobs as Job[]).some((j) => j.kind.startsWith("q") && was.get(j.id) !== j.status)) window.dispatchEvent(new Event("cutroom-dirty"));
@@ -75,8 +75,9 @@ export function App() {
       const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
       const s = useStore.getState();
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); s.set({ paletteOpen: !s.paletteOpen }); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); runCommand("draft"); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && s.appMode === "full") { e.preventDefault(); runCommand("draft"); return; }
       if (typing || s.paletteOpen) return;
+      if (s.appMode === "quick") return;   // quick mode has its own keys (QuickView); the full studio's stay off
       if (e.ctrlKey && e.key.toLowerCase() === "z") { e.preventDefault(); runCommand(e.shiftKey ? "redo" : "undo"); return; }
       if (e.altKey && /^[1-4]$/.test(e.key) && s.monitor === "program") {
         e.preventDefault();

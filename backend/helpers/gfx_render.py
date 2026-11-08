@@ -109,22 +109,61 @@ def fmt_num(v: float, unit: str = "") -> str:
 
 
 FALLBACK = {"₽": "руб.", "→": "—", " ": " ", " ": " "}
+_CMAPS: dict = {}
+_GLYPH_FONTS: list[str] = []   # the brand's fonts: a character missing in one is drawn with another
+
+
+def _cmap(name: str) -> set[int]:
+    if name not in _CMAPS:
+        cps: set[int] = set()
+        try:
+            from fontTools.ttLib import TTFont
+            p = Path(name.partition("@")[0])
+            p = p if p.is_absolute() else next((d / p for d in FONT_DIRS if (d / p).exists()), None)
+            if p and p.exists():
+                cps = set(TTFont(str(p), lazy=True).getBestCmap())
+        except Exception:  # noqa: BLE001 — no fontTools or a broken font: no per-glyph fallback
+            pass
+        _CMAPS[name] = cps
+    return _CMAPS[name]
+
+
+def _name_of(f: ImageFont.FreeTypeFont) -> str:
+    return next((k[0] for k, v in _FONTS.items() if v is f), f.path)
+
+
+def T(d, xy, text: str, font: ImageFont.FreeTypeFont, fill=None, **kw) -> None:
+    """d.text with a per-glyph fallback: Sofia Sans has the arrow but no rouble sign, Jura the other
+    way round — each run of characters is drawn in a brand font that has them, on one baseline."""
+    have = _cmap(_name_of(font))
+    if not have or kw or all(ord(ch) in have or ch.isspace() for ch in text):
+        d.text(xy, text, font=font, fill=fill, **kw)
+        return
+    x, y = xy
+    base = y + font.getmetrics()[0]
+    runs: list = []
+    for ch in text:
+        f = font
+        if ord(ch) not in have and not ch.isspace():
+            alt = next((n for n in _GLYPH_FONTS if ord(ch) in _cmap(n)), None)
+            if alt:
+                f = globals()["font"](alt, font.size)
+        if runs and runs[-1][1] is f:
+            runs[-1] = (runs[-1][0] + ch, f)
+        else:
+            runs.append((ch, f))
+    for run, f in runs:
+        d.text((x, base), run, font=f, fill=fill, anchor="ls")
+        x += d.textlength(run, font=f)
 
 
 def glyph_safe(spec, font_names: list[str]):
-    """Characters a brand font doesn't have would render as boxes: swap them for plain equivalents."""
-    try:
-        from fontTools.ttLib import TTFont
-    except ImportError:
+    """Characters none of the brand fonts has would render as boxes: swap them for plain equivalents.
+    (One font missing a glyph is fine: T() draws it with another brand font.)"""
+    names = list(dict.fromkeys(font_names + _GLYPH_FONTS))
+    if not any(_cmap(n) for n in names):
         return spec
-    missing = set()
-    for name in font_names:
-        p = Path(name.partition("@")[0])
-        p = p if p.is_absolute() else next((d / p for d in FONT_DIRS if (d / p).exists()), None)
-        if not p or not p.exists():
-            continue
-        cmap = TTFont(str(p), lazy=True).getBestCmap()
-        missing |= {ch for ch in FALLBACK if ord(ch) not in cmap}
+    missing = {ch for ch in FALLBACK if not any(ord(ch) in _cmap(n) for n in names)}
     if not missing:
         return spec
 
@@ -144,6 +183,7 @@ def glyph_safe(spec, font_names: list[str]):
 class Ctx:
     def __init__(self, spec: dict, brand: dict, duration: float):
         b = {**DEFAULT_BRAND, **brand}
+        _GLYPH_FONTS[:] = [n for n in dict.fromkeys([b["font"], b["font_bold"], b.get("font_accent") or ""]) if n]
         spec = glyph_safe(spec, [b["font"], b["font_bold"]])
         self.s, self.b, self.dur = spec, b, duration
         self.f_title = load_font(self.b["font_bold"], 54)
@@ -189,17 +229,17 @@ def draw_frame(c: Ctx, t: float) -> Image.Image:
     lines, ft = title_lines(d, title, c.b["font_bold"], 66 if c.b.get("upper") else 54, inner)
     lh = int(ft.size * 1.15)
     for i, ln in enumerate(lines):
-        d.text((x0 + pad, y0s + 40 + i * lh), ln, font=ft, fill=rgb(c.b["fg"], int(255 * ta)))
+        T(d, (x0 + pad, y0s + 40 + i * lh), ln, font=ft, fill=rgb(c.b["fg"], int(255 * ta)))
     y = y0s + 40 + len(lines) * lh + 12
     if c.s.get("subtitle"):
         fs = fit(d, c.s["subtitle"], c.b["font"], 30, inner)
-        d.text((x0 + pad, y), c.s["subtitle"], font=fs, fill=rgb(c.b["muted"], int(255 * ta)))
+        T(d, (x0 + pad, y), c.s["subtitle"], font=fs, fill=rgb(c.b["muted"], int(255 * ta)))
         y += 42
     area = (x0 + pad, max(y0s + 190, y + 40), x1 - pad, y1s - 70)
     {"number": _number, "bars": _bars, "donut": _donut, "list": _list, "compare": _compare, "line": _line}.get(kind, _list)(c, d, t, a, area)
     if c.s.get("note"):
         na = a * ease_out((t - c.t_items[-1] - c.span * 0.6) / 0.4)
-        d.text((area[0], y1s - 60), c.s["note"], font=fit(d, c.s["note"], c.b["font"], 30, area[2] - area[0]), fill=rgb(c.b["muted"], int(255 * na)))
+        T(d, (area[0], y1s - 60), c.s["note"], font=fit(d, c.s["note"], c.b["font"], 30, area[2] - area[0]), fill=rgb(c.b["muted"], int(255 * na)))
     return im
 
 
@@ -241,12 +281,12 @@ def _number(c, d, t, a, area):
     txt = fmt_num(v if not float(it.get("value") or 0).is_integer() else round(v), c.s.get("unit", ""))
     final = fmt_num(it.get("value") or 0, c.s.get("unit", ""))
     fb = fit(d, final, c.b["font_bold"], 150, area[2] - area[0], 0.35)
-    d.text((area[0], area[1] + 40), txt, font=fb, fill=rgb(c.b["accent"], int(255 * a * min(1, k * 2))))
+    T(d, (area[0], area[1] + 40), txt, font=fb, fill=rgb(c.b["accent"], int(255 * a * min(1, k * 2))))
     lab = it.get("label", "")
-    d.text((area[0], area[1] + 60 + int(fb.size * 1.2)), lab, font=fit(d, lab, c.b["font"], 36, area[2] - area[0]), fill=rgb(c.b["fg"], int(255 * a * k)))
+    T(d, (area[0], area[1] + 60 + int(fb.size * 1.2)), lab, font=fit(d, lab, c.b["font"], 36, area[2] - area[0]), fill=rgb(c.b["fg"], int(255 * a * k)))
     for j, extra in enumerate(c.items[1:3], start=1):
         kj = _k(c, t, j)
-        d.text((area[0], area[1] + 320 + (j - 1) * 60), f"{extra.get('label', '')}: {fmt_num(extra.get('value'), c.s.get('unit', ''))} {extra.get('text', '')}".strip(),
+        T(d, (area[0], area[1] + 320 + (j - 1) * 60), f"{extra.get('label', '')}: {fmt_num(extra.get('value'), c.s.get('unit', ''))} {extra.get('text', '')}".strip(),
                font=c.f_sub, fill=rgb(c.b["muted"], int(255 * a * kj)))
 
 
@@ -258,11 +298,11 @@ def _bars(c, d, t, a, area):
         k = _k(c, t, i)
         y = area[1] + i * h
         hi = c.s.get("highlight") == i
-        d.text((area[0], y), it.get("label", ""), font=c.f_sub, fill=rgb(c.b["fg"], int(255 * a * k)))
+        T(d, (area[0], y), it.get("label", ""), font=c.f_sub, fill=rgb(c.b["fg"], int(255 * a * k)))
         full = (area[2] - area[0] - 170) * vals[i] / vmax
         d.rounded_rectangle((area[0], y + 40, area[0] + max(6, full * k), y + 40 + h * 0.38), radius=8,
                             fill=rgb(c.b["accent"] if hi or c.s.get("highlight") is None else c.b["muted"], int(255 * a)))
-        d.text((area[0] + full * k + 16, y + 34), fmt_num(it.get("value"), c.s.get("unit", "")), font=c.f_bold, fill=rgb(c.b["fg"], int(255 * a * k)))
+        T(d, (area[0] + full * k + 16, y + 34), fmt_num(it.get("value"), c.s.get("unit", "")), font=c.f_bold, fill=rgb(c.b["fg"], int(255 * a * k)))
 
 
 def _donut(c, d, t, a, area):
@@ -280,14 +320,14 @@ def _donut(c, d, t, a, area):
         start += 360 * v / total
         ly = area[1] + 20 + i * 92
         d.rectangle((area[0] + 500, ly + 10, area[0] + 528, ly + 38), fill=rgb(cols[i % 4], int(255 * a * k)))
-        d.text((area[0] + 545, ly), c.items[i].get("label", ""), font=c.f_sub, fill=rgb(c.b["fg"], int(255 * a * k)))
-        d.text((area[0] + 545, ly + 38), fmt_num(v, c.s.get("unit", "%")), font=c.f_sub, fill=rgb(c.b["muted"], int(255 * a * k)))
+        T(d, (area[0] + 545, ly), c.items[i].get("label", ""), font=c.f_sub, fill=rgb(c.b["fg"], int(255 * a * k)))
+        T(d, (area[0] + 545, ly + 38), fmt_num(v, c.s.get("unit", "%")), font=c.f_sub, fill=rgb(c.b["muted"], int(255 * a * k)))
     d.ellipse((cx - r * 0.58, cy - r * 0.58, cx + r * 0.58, cy + r * 0.58), fill=rgb(c.b["panel"], int(255 * a)))
     hi = c.s.get("highlight") if c.s.get("highlight") is not None else 0
     k = _k(c, t, hi)
     pct = f"{round(vals[hi] / total * 100)}%"
     tw = d.textlength(pct, font=c.f_bold)
-    d.text((cx - tw / 2, cy - 24), pct, font=c.f_bold, fill=rgb(c.b["accent"], int(255 * a * k)))
+    T(d, (cx - tw / 2, cy - 24), pct, font=c.f_bold, fill=rgb(c.b["accent"], int(255 * a * k)))
 
 
 def _list(c, d, t, a, area):
@@ -298,7 +338,7 @@ def _list(c, d, t, a, area):
         off = int((1 - k) * 30)
         d.ellipse((area[0] + off, y + 18, area[0] + 18 + off, y + 36), fill=rgb(c.b["accent"], int(255 * a * k)))
         txt = it.get("text") or it.get("label", "")
-        d.text((area[0] + 40 + off, y), txt, font=fit(d, txt, c.b["font"], 36, area[2] - area[0] - 40), fill=rgb(c.b["fg"], int(255 * a * k)))
+        T(d, (area[0] + 40 + off, y), txt, font=fit(d, txt, c.b["font"], 36, area[2] - area[0] - 40), fill=rgb(c.b["fg"], int(255 * a * k)))
 
 
 def _compare(c, d, t, a, area):
@@ -307,9 +347,9 @@ def _compare(c, d, t, a, area):
     for i, it in enumerate(c.items):
         k = _k(c, t, i)
         y = area[1] + i * h
-        d.text((area[0], y), it.get("label", ""), font=fit(d, it.get("label", ""), c.b["font"], 36, mid - area[0] - 16), fill=rgb(c.b["muted"], int(255 * a * k)))
+        T(d, (area[0], y), it.get("label", ""), font=fit(d, it.get("label", ""), c.b["font"], 36, mid - area[0] - 16), fill=rgb(c.b["muted"], int(255 * a * k)))
         val = it.get("text") or fmt_num(it.get("value"), c.s.get("unit", ""))
-        d.text((mid, y), val, font=fit(d, val, c.b["font_bold"], 40, area[2] - mid),
+        T(d, (mid, y), val, font=fit(d, val, c.b["font_bold"], 40, area[2] - mid),
                fill=rgb(c.b["accent"] if c.s.get("highlight") == i else c.b["fg"], int(255 * a * k)))
         d.line((area[0], y + h - 14, area[2], y + h - 14), fill=rgb(c.b["muted"], int(60 * a * k)), width=2)
 
@@ -335,7 +375,7 @@ def _line(c, d, t, a, area):
             d.ellipse((x - 9, y - 9, x + 9, y + 9), fill=rgb(c.b["fg"], int(255 * a)))
             lab = c.items[i].get("label", "")
             tw = d.textlength(lab, font=c.f_sub)
-            d.text((x - tw / 2, y1 + 14), lab, font=c.f_sub, fill=rgb(c.b["muted"], int(255 * a)))
+            T(d, (x - tw / 2, y1 + 14), lab, font=c.f_sub, fill=rgb(c.b["muted"], int(255 * a)))
     hl = c.s.get("highlight")
     if hl is not None and 0 <= hl < len(pts) and prog >= hl:
         x, y = pts[hl]
@@ -345,7 +385,7 @@ def _line(c, d, t, a, area):
         tw = d.textlength(tag, font=c.f_bold)
         tx = min(max(x - tw / 2, area[0]), area[2] - tw)
         d.rounded_rectangle((tx - 14, y - 92, tx + tw + 14, y - 34), radius=12, fill=rgb(c.b["panel"], int(245 * a * k)), outline=rgb(c.b["accent"], int(255 * a * k)), width=2)
-        d.text((tx, y - 88), tag, font=c.f_bold, fill=rgb(c.b["accent"], int(255 * a * k)))
+        T(d, (tx, y - 88), tag, font=c.f_bold, fill=rgb(c.b["accent"], int(255 * a * k)))
 
 
 def _title_card(c, d, t, a):
@@ -357,8 +397,8 @@ def _title_card(c, d, t, a):
     d.rounded_rectangle((x, y, x + tw * k, y + 170), radius=18, fill=rgb(c.b["panel"], int(235 * a)))
     d.rectangle((x, y, x + 10, y + 170), fill=rgb(c.b["accent"], int(255 * a)))
     ta = a * ease_out((t - 0.4) / 0.4)
-    d.text((x + 50, y + 26), c.s.get("title", ""), font=ft, fill=rgb(c.b["fg"], int(255 * ta)))
-    d.text((x + 50, y + 104), c.s.get("subtitle", ""), font=fs, fill=rgb(c.b["muted"], int(255 * ta)))
+    T(d, (x + 50, y + 26), c.s.get("title", ""), font=ft, fill=rgb(c.b["fg"], int(255 * ta)))
+    T(d, (x + 50, y + 104), c.s.get("subtitle", ""), font=fs, fill=rgb(c.b["muted"], int(255 * ta)))
 
 
 def main() -> None:

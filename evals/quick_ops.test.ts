@@ -1,6 +1,6 @@
 // Quick-mode timeline operations: split, move (free / overwrite), trim/extend, delete (lift / ripple),
 // linked picture+sound. Run: node evals/quick_ops.test.ts
-import { closeGaps, move, remove, split, trim, type QDoc } from "../src/quickOps.ts";
+import { closeGaps, copy, link, move, paste, remove, spliceFades, split, trim, unlink, type QDoc } from "../src/quickOps.ts";
 
 let fails = 0;
 const ok = (cond: boolean, what: string) => { console.log((cond ? "PASS " : "FAIL ") + what); if (!cond) fails++; };
@@ -56,6 +56,34 @@ ok(d.tracks.video[1].start === 150 && d.tracks.overlays[0].start === 160, "уд�
 ok(d.tracks.slides[0].start === 90 && d.tracks.slides[0].len === 10 + 0 + 0 + 10 - 10, "удаление со сдвигом: слайд на стыке укоротился");
 d = closeGaps(base());
 ok(d.tracks.video[2].start === 150, "закрыть пробелы: пауза 150–200 убрана");
+
+// linked both ways: dragging the SOUND's edge moves the picture's edge too (it used to change only the sound)
+d = trim(base(), { track: "audio", id: "a3" }, "end", -20, dur);
+ok(d.tracks.audio.find((b) => b.id === "a3")!.len === 30 && d.tracks.video.find((b) => b.id === "v3")!.len === 30, "растяжка звука: связанная картинка подрезана так же");
+d = trim(base(), { track: "audio", id: "a3" }, "start", 10, dur);
+const v3t = d.tracks.video.find((b) => b.id === "v3")!;
+ok(v3t.start === 210 && Math.abs(v3t.in - (30 + 10 / 25)) < 1e-6, "растяжка звука за начало: картинка сдвинула вход так же (30,4 с)");
+d = move(base(), [{ track: "audio", id: "a3" }], -30, false);
+ok(d.tracks.video.find((b) => b.id === "v3")!.start === 170, "перенос звука: связанная картинка едет вместе");
+d = unlink(base(), [{ track: "audio", id: "a3" }]);
+ok(!d.tracks.audio.find((b) => b.id === "a3")!.link, "отвязать: связь звука с картинкой снята");
+d = trim(d, { track: "audio", id: "a3" }, "end", -20, dur);
+ok(d.tracks.video.find((b) => b.id === "v3")!.len === 50, "после отвязки звук растягивается один, картинка на месте");
+ok(link(d, [{ track: "video", id: "v3" }, { track: "audio", id: "a3" }]).tracks.audio.find((b) => b.id === "a3")!.link === "v3", "связать: звук снова привязан");
+
+// fades at the cuts: both sides of each touching pair, nothing at a free end
+d = spliceFades(base(), [], 0.12);
+const [fa1, fa2, fa3] = d.tracks.audio;
+ok(fa1.fade_out === 0.12 && fa2.fade_in === 0.12 && !fa1.fade_in, "фейды на склейках: у стыка 100 — выход первого и вход второго");
+ok(!fa2.fade_out && !fa3.fade_in, "фейды на склейках: где звук не стыкуется (150–200), фейдов нет");
+ok(!spliceFades(d, [], 0).tracks.audio.some((a) => a.fade_in || a.fade_out), "убрать фейды: все сняты");
+
+// copy / paste: new ids, link kept inside the clip, pasted over what is there
+const c = copy(base(), [{ track: "video", id: "v2" }])!;
+const pr = paste(base(), c, 20);
+const nv = pr.doc.tracks.video.find((b) => b.start === 20)!, na = pr.doc.tracks.audio.find((b) => b.start === 20)!;
+ok(!!nv && nv.id !== "v2" && nv.src === "B" && na.link === nv.id, "вставка: копия блока со своим звуком, новые id, связь сохранена");
+ok(pr.doc.tracks.video.find((b) => b.id === "v1")!.len === 20, "вставка: легла поверх (первый блок обрезан до 20 кадров)");
 
 console.log(fails ? `\n${fails} проверок не прошло` : "\nвсе проверки пройдены");
 if (fails) process.exit(1);

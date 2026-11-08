@@ -88,17 +88,19 @@ def save(project, doc: dict, author: str, note: str) -> int:
     _schema(project)
     doc = normalize(project, doc)
     doc.setdefault("meta", {})["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    h = head(project)
+    # head read, redo-branch drop, insert and head write under one lock: two quick edits (a drag
+    # sends one per move) used to read the same head, and one deleted the version the other pointed at
     with project._db_lock:
-        if h is not None:   # a new edit after undo drops the redo branch
-            project.db.execute("delete from quick_versions where id > ?", (h,))
+        row = project.db.execute("select value from stats where key = 'quick_head'").fetchone()
+        if row is not None:   # a new edit after undo drops the redo branch
+            project.db.execute("delete from quick_versions where id > ?", (int(row[0]),))
         cur = project.db.execute("insert into quick_versions (created, author, note, data) values (?,?,?,?)",
                                  (time.time(), author, note, json.dumps(doc, ensure_ascii=False)))
         vid = cur.lastrowid
+        project.db.execute("insert or replace into stats values (?,?)", ("quick_head", vid))
         project.db.commit()
-    project.stat_set("quick_head", vid)
-    doc["meta"]["version_id"] = vid
-    (qdir(project) / "quick.json").write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+        doc["meta"]["version_id"] = vid
+        (qdir(project) / "quick.json").write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
     return vid
 
 
@@ -120,14 +122,17 @@ def history(project) -> dict:
 
 def move_head(project, step: int) -> dict | None:
     _schema(project)
-    ids = [r[0] for r in project._q("select id from quick_versions order by id")]
-    h = head(project)
-    if h not in ids:
-        return None
-    i = ids.index(h) + step
-    if not 0 <= i < len(ids):
-        return None
-    project.stat_set("quick_head", ids[i])
+    with project._db_lock:
+        ids = [r[0] for r in project.db.execute("select id from quick_versions order by id")]
+        row = project.db.execute("select value from stats where key = 'quick_head'").fetchone()
+        h = int(row[0]) if row is not None else None
+        if h not in ids:
+            return None
+        i = ids.index(h) + step
+        if not 0 <= i < len(ids):
+            return None
+        project.db.execute("insert or replace into stats values (?,?)", ("quick_head", ids[i]))
+        project.db.commit()
     return current(project)
 
 

@@ -39,11 +39,16 @@ PROFILES = {"draft": {"w": 1280, "h": 720, "quality": "draft"}, "final": {"w": 1
 # speech styles: the clean-up chain (cutroom.audio) + an optional music bed level under this block
 STYLES = {
     "clean": {"label": "Чистая речь", "fx": {"highpass": True, "denoise": "medium", "deess": True, "compress": "speech"}, "bed": None},
-    "light": {"label": "Речь и лёгкая подложка", "fx": {"highpass": True, "denoise": "medium", "deess": True, "compress": "speech"}, "bed": -28.0},
-    "bed": {"label": "Речь на музыке", "fx": {"highpass": True, "denoise": "medium", "deess": True, "compress": "speech"}, "bed": -20.0},
+    "light": {"label": "Речь и лёгкая подложка", "fx": {"highpass": True, "denoise": "medium", "deess": True, "compress": "speech"}, "bed": -10.0},
+    "bed": {"label": "Речь на музыке", "fx": {"highpass": True, "denoise": "medium", "deess": True, "compress": "speech"}, "bed": -4.0},
     "natural": {"label": "Как записано", "fx": {"highpass": True, "denoise": "off", "deess": False, "compress": "soft"}, "bed": None},
 }
 DEFAULT_STYLE = "clean"
+# the bed level is relative to the speech: the music is first brought to the speech loudness (any track,
+# any mastering), then lowered by the style's dB and ducked a few dB more under the words.
+# (Raw tracks at -28/-20 dB under a 6:1 duck ended up ~38 dB below the voice — inaudible.)
+MUSIC_PREP = f"aresample={SR},aformat=channel_layouts=stereo,loudnorm=I=-14:TP=-2:LRA=11,aresample={SR}"
+DUCK = "sidechaincompress=threshold=0.05:ratio=3:attack=60:release=500"
 
 
 def ff(cmd: list[str], what: str) -> subprocess.CompletedProcess:
@@ -73,23 +78,31 @@ def overlay_pieces(project, doc: dict, s0: int, n: int) -> list[dict]:
     fps = fps_of(doc)
     out = []
     colors = load_brand()["colors"]
+    # a ready card takes the slide's place while it is on screen (cards «по слайду» stood on the very
+    # panel of their slide and covered it, the slide's edges sticking out)
+    cards = [(o["start"], o["start"] + o["len"]) for o in doc["tracks"]["overlays"]
+             if o.get("status") == "ready" and Path(((o.get("files") or {}).get("render")) or "").is_file()]
     for kind in ("slides", "overlays"):
         for o in doc["tracks"][kind]:
             a, b = max(s0, o["start"]), min(s0 + n, o["start"] + o["len"])
             if b <= a:
                 continue
+            spans = [(a, b)]
             if kind == "slides":
                 f = compose(doc, o["page"], o.get("layout", "side"), colors)
                 if not f:
                     continue
                 ident, image = f"{f.name}", True
+                for c0, c1 in cards:
+                    spans = [x for x0, x1 in spans for x in ((x0, min(x1, c0)), (max(x0, c1), x1)) if x[1] > x[0]]
             else:
                 f = Path(((o.get("files") or {}).get("render")) or "")
                 if o.get("status") != "ready" or not f.is_file():
                     continue
                 ident, image = f"{o['files'].get('v')}", False
-            out.append({"file": str(f), "image": image, "offset": round((a - s0) / fps, 4), "skip": round((a - o["start"]) / fps, 4),
-                        "dur": round((b - a) / fps, 4), "id": o["id"], "ident": ident})
+            for x0, x1 in spans:
+                out.append({"file": str(f), "image": image, "offset": round((x0 - s0) / fps, 4), "skip": round((x0 - o["start"]) / fps, 4),
+                            "dur": round((x1 - x0) / fps, 4), "id": o["id"], "ident": ident})
     return out
 
 
@@ -106,14 +119,16 @@ def segments(project, doc: dict, profile: str) -> list[dict]:
         src = project.sources.get(v["src"]) if v else None
         hdr = bool((((src or {}).get("probe") or {}).get("video") or {}).get("hdr"))
         grade = build_filter((v.get("color") if v and v.get("color") is not None else doc.get("grade"))) if v else ""
+        # clip settings from the timeline menu: rotate (0/90/180/270, clockwise) and mirror
+        tf = {"rot": int(v.get("rotate") or 0) % 360, "fh": bool(v.get("flip_h")), "fv": bool(v.get("flip_v"))} if v else {}
         key = {"rv": RENDER_VERSION, "p": profile, "enc": enc, "rate": doc["rate"], "n": n,
                "src": (src or {}).get("hash"), "in": round(v["in"], 4) if v else None, "hdr": hdr, "grade": grade,
-               "ov": [(p["ident"], p["offset"], p["skip"], p["dur"]) for p in pieces]}
+               "ov": [(p["ident"], p["offset"], p["skip"], p["dur"]) for p in pieces], **({"tf": tf} if any(tf.values()) else {})}
         h = _h(key)
         f = qdir(project) / "cache" / profile / f"{h}.mp4"
         out.append({"hash": h, "file": f, "start": s0, "frames": n, "block": v["id"] if v else None, "src": v["src"] if v else None,
                     "job": {"out": str(f), "frames": n, "rate": doc["rate"], **prof, "encoder": enc,
-                            "src": (src or {}).get("path"), "in": v["in"] if v else 0, "hdr": hdr, "grade": grade,
+                            "src": (src or {}).get("path"), "in": v["in"] if v else 0, "hdr": hdr, "grade": grade, **tf,
                             "overlays": [{k: p[k] for k in ("file", "image", "offset", "skip", "dur")} for p in pieces]}})
 
     for v in vids:
@@ -152,8 +167,11 @@ def audio_piece(project, doc: dict, a: dict, prev: dict | None, nxt: dict | None
     fin, fout = not _continuous(prev, a, fps), not _continuous(a, nxt, fps)
     src = project.sources[a["src"]]
     dur = a["len"] / fps
+    # fades: 30 ms anti-click at a jump in the source, or the block's own fade (set on the timeline) if longer
+    d_in = max(0.03 if fin else 0.0, min(float(a.get("fade_in") or 0), dur / 2))
+    d_out = max(0.03 if fout else 0.0, min(float(a.get("fade_out") or 0), dur / 2))
     key = {"rv": RENDER_VERSION, "src": src["hash"], "in": round(a["in"], 4), "n": a["len"], "rate": doc["rate"],
-           "chain": chain, "fin": fin, "fout": fout, "track": src.get("audio_track", 0)}
+           "chain": chain, "fin": round(d_in, 3), "fout": round(d_out, 3), "track": src.get("audio_track", 0)}
     f = qdir(project) / "cache" / "audio" / f"{_h(key)}.wav"
     if f.exists():
         return f, False
@@ -163,10 +181,10 @@ def audio_piece(project, doc: dict, a: dict, prev: dict | None, nxt: dict | None
     lat = _chain_latency(chain, src["path"], a["in"]) if chain else 0.0
     af = [chain] if chain else []
     af += [f"atrim=start={pre + lat:.4f}", "asetpts=PTS-STARTPTS"]
-    if fin:
-        af.append("afade=t=in:st=0:d=0.03")
-    if fout:
-        af.append(f"afade=t=out:st={max(0.0, dur - 0.03):.4f}:d=0.03")
+    if d_in:
+        af.append(f"afade=t=in:st=0:d={d_in:.4f}")
+    if d_out:
+        af.append(f"afade=t=out:st={max(0.0, dur - d_out):.4f}:d={d_out:.4f}")
     af += ["apad", f"atrim=end_sample={round(dur * SR)}"]
     tmp = f.with_suffix(".part.wav")
     ff(["ffmpeg", "-y", "-v", "error", "-ss", f"{a['in'] - pre:.4f}", "-t", f"{dur + pre + lat + 0.3:.4f}", "-i", src["path"],
@@ -270,8 +288,8 @@ def master(voice: Path, doc: dict, out: Path, total_s: float, profile: str = "fi
         env = "+".join(f"{10 ** (lvl / 20):.5f}*clip(min((t-{a:.3f})/0.6\\,({b:.3f}-t)/0.6)\\,0\\,1)" for a, b, lvl in regions)
         pre = out.with_name("mix.wav")
         ff(["ffmpeg", "-y", "-v", "error", "-i", str(voice), "-stream_loop", "-1", "-i", music["path"], "-filter_complex",
-            f"[1:a]aresample={SR},aformat=channel_layouts=stereo,volume='{env}':eval=frame,atrim=end={total_s:.4f}[m0];"
-            "[0:a]asplit=2[v][sc];[m0][sc]sidechaincompress=threshold=0.02:ratio=6:attack=40:release=600[md];"
+            f"[1:a]{MUSIC_PREP},volume='{env}':eval=frame,atrim=end={total_s:.4f}[m0];"
+            f"[0:a]asplit=2[v][sc];[m0][sc]{DUCK}[md];"
             "[v][md]amix=inputs=2:duration=first:normalize=0[mix]",
             "-map", "[mix]", "-c:a", "pcm_s16le", "-ar", str(SR), str(pre)], "музыкальная подложка")
     if profile == "draft":
@@ -336,12 +354,14 @@ def _plan(project, queue, job: Job, profile: str, on_done) -> None:
     job.note = f"пересобрать {len(need)} из {len(segs)}"
     vid = doc["meta"]["version_id"]
     rebuilt = [s["block"] or f"пауза@{s['start']}" for s in need]
+    planned = {x["hash"] for x in segs}
     queue.add(Job(kind="qassemble", label=("Сборка превью" if profile == "draft" else "Экспорт") + f" v{vid}: склейка из кэша",
                   lane="assemble", priority=4 if profile == "draft" else 6, deps=deps, source=profile,
-                  fn=lambda j: assemble(project, j, profile, vid, rebuilt, on_done)))
+                  fn=lambda j: assemble(project, j, profile, vid, rebuilt, on_done, planned, queue)))
 
 
-def assemble(project, job: Job, profile: str, vid: int, rebuilt: list[str], on_done=None) -> dict | None:
+def assemble(project, job: Job, profile: str, vid: int, rebuilt: list[str], on_done=None,
+             planned: set[str] | None = None, queue=None) -> dict | None:
     doc = model.current(project)
     if not doc or doc["meta"]["version_id"] != vid:
         job.note = "устарело: собирается более новая версия"
@@ -350,6 +370,13 @@ def assemble(project, job: Job, profile: str, vid: int, rebuilt: list[str], on_d
     fps = fps_of(doc)
     segs = segments(project, doc, profile)
     gone = missing(segs)
+    if gone and planned is not None and any(s["hash"] not in planned for s in gone):
+        # the document changed in place after planning (a card got drawn, a status landed): not an error —
+        # a fresh plan renders the new blocks
+        job.note = "документ обновился во время сборки — собираю заново"
+        if queue is not None:
+            schedule(project, queue, profile, 0.3, on_done)
+        return None
     if gone:
         raise RuntimeError(f"не готовы блоки: {', '.join(str(s['block'] or 'пауза') for s in gone[:5])}")
     total = sum(s["frames"] for s in segs)

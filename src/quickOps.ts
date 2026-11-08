@@ -4,8 +4,10 @@
 
 export type TrackName = "video" | "audio" | "slides" | "overlays";
 export type Grade = { preset?: string; cdl?: { slope?: number[]; offset?: number[]; power?: number[]; sat?: number }; temperature?: number; raw?: string };
-export type VBlock = { id: string; start: number; len: number; src: string; in: number; color?: Grade | null };
-export type ABlock = { id: string; start: number; len: number; src: string; in: number; style?: string; link?: string };
+export type VBlock = { id: string; start: number; len: number; src: string; in: number; color?: Grade | null;
+  rotate?: number; flip_h?: boolean; flip_v?: boolean };   // clip settings: clockwise turn, mirror
+export type ABlock = { id: string; start: number; len: number; src: string; in: number; style?: string; link?: string;
+  fade_in?: number; fade_out?: number };   // fades in seconds (the timeline's corner handles)
 export type SBlock = { id: string; start: number; len: number; page: number; layout?: "side" | "full" };
 export type OBlock = {
   id: string; start: number; len: number; slide?: string | null; page?: number | null; hint?: string; style?: string;
@@ -16,7 +18,7 @@ export type Block = VBlock | ABlock | SBlock | OBlock;
 export type QDoc = {
   version: number; rate: string; roles: Record<string, string>; grade: Grade | null;
   music: { track: string; path: string; title: string } | null;
-  presentation: { file: string; name: string; pages: { n: number; text: string }[] } | null;
+  presentation: { file: string; name: string; pages: { n: number; text: string; text_src?: string }[]; text_note?: string | null } | null;
   tracks: { video: VBlock[]; audio: ABlock[]; slides: SBlock[]; overlays: OBlock[] };
   meta: { version_id?: number; strategy_hash?: string };
 };
@@ -41,12 +43,16 @@ export function find(d: QDoc, r: Ref): Block | undefined {
   return list(d, r.track).find((b) => b.id === r.id);
 }
 
-/** The blocks an operation on `refs` really touches: selected ones + the sound linked to selected pictures. */
+/** The blocks an operation on `refs` really touches: the selected ones + their linked partners, both ways
+ *  (a picture brings its sound, a sound brings its picture). */
 export function withLinked(d: QDoc, refs: Ref[]): Ref[] {
   const out = [...refs];
+  const has = (t: TrackName, id: string) => out.some((r) => r.track === t && r.id === id);
   const vids = new Set(refs.filter((r) => r.track === "video").map((r) => r.id));
+  const auds = new Set(refs.filter((r) => r.track === "audio").map((r) => r.id));
   for (const a of d.tracks.audio) {
-    if (a.link && vids.has(a.link) && !out.some((r) => r.track === "audio" && r.id === a.id)) out.push({ track: "audio", id: a.id });
+    if (a.link && vids.has(a.link) && !has("audio", a.id)) out.push({ track: "audio", id: a.id });
+    if (a.link && auds.has(a.id) && !has("video", a.link) && d.tracks.video.some((v) => v.id === a.link)) out.push({ track: "video", id: a.link });
   }
   return out;
 }
@@ -132,7 +138,7 @@ export function trim(doc: QDoc, ref: Ref, edge: "start" | "end", delta: number, 
   const b0 = find(d, ref);
   if (!b0) return doc;
   const group = [ref, ...withLinked(d, [ref]).slice(1).filter((r) => {
-    const a = find(d, r)!;   // the linked sound follows only when its edge sits where the picture's does
+    const a = find(d, r)!;   // the linked partner (sound or picture) follows when its edge sits where this one's does
     return edge === "start" ? a.start === b0.start : end(a) === end(b0);
   })];
   let dd = delta;
@@ -246,4 +252,83 @@ export function edges(d: QDoc, exclude: Set<string>): number[] {
   const out: number[] = [0];
   for (const t of TRACKS) for (const b of list(d, t)) if (!exclude.has(b.id)) out.push(b.start, end(b));
   return out;
+}
+
+/** Change fields of the selected blocks (rotate, mirror, fades…) — the blocks themselves, not their partners. */
+export function patch(doc: QDoc, refs: Ref[], fn: (b: Block, t: TrackName) => void): QDoc {
+  const d = clone(doc);
+  for (const r of refs) { const b = find(d, r); if (b) fn(b, r.track); }
+  return d;
+}
+
+/** Short fades where two sound blocks meet (or around the selected ones): evens out the jump in level
+ *  and the click at a cut. `sec` per side; 0 removes them. */
+export function spliceFades(doc: QDoc, refs: Ref[], sec: number): QDoc {
+  const d = clone(doc);
+  const pick = new Set(refs.filter((r) => r.track === "audio").map((r) => r.id));
+  const a = d.tracks.audio;
+  const fps = fpsOf(d);
+  for (let i = 0; i < a.length; i++) {
+    const b = a[i];
+    if (pick.size && !pick.has(b.id)) continue;
+    const max = b.len / fps / 2;
+    const prevTouch = i > 0 && end(a[i - 1]) >= b.start;
+    const nextTouch = i < a.length - 1 && a[i + 1].start <= end(b);
+    if (pick.size || prevTouch) b.fade_in = sec ? Math.min(sec, max) : undefined;
+    if (pick.size || nextTouch) b.fade_out = sec ? Math.min(sec, max) : undefined;
+    if (!pick.size) {   // the neighbour across the cut gets the matching fade
+      if (prevTouch) a[i - 1].fade_out = sec ? Math.min(sec, a[i - 1].len / fps / 2) : undefined;
+      if (nextTouch) a[i + 1].fade_in = sec ? Math.min(sec, a[i + 1].len / fps / 2) : undefined;
+    }
+  }
+  return d;
+}
+
+export type Clip = { blocks: { track: TrackName; b: Block }[]; start: number };
+
+/** Copy: the selection with its linked partners, positions relative to the earliest block. */
+export function copy(d: QDoc, refs: Ref[]): Clip | null {
+  const all = withLinked(d, refs).map((r) => ({ track: r.track, b: find(d, r) })).filter((x) => x.b) as { track: TrackName; b: Block }[];
+  if (!all.length) return null;
+  const start = Math.min(...all.map((x) => x.b.start));
+  return { start, blocks: all.map((x) => ({ track: x.track, b: JSON.parse(JSON.stringify(x.b)) })) };
+}
+
+/** Paste a copied clip at frame `at`: new ids (links kept inside the clip), overwrites what is there. */
+export function paste(doc: QDoc, clip: Clip, at: number): { doc: QDoc; refs: Ref[] } {
+  const d = clone(doc);
+  const ids = new Map<string, string>();
+  for (const x of clip.blocks) ids.set(x.b.id, uid(x.b.id[0]));
+  const refs: Ref[] = [];
+  const placed: { track: TrackName; b: Block }[] = [];
+  for (const x of clip.blocks) {
+    const b = { ...JSON.parse(JSON.stringify(x.b)), id: ids.get(x.b.id)!, start: at + (x.b.start - clip.start) } as Block;
+    if (x.track === "audio" && (b as ABlock).link) {
+      const l = ids.get((b as ABlock).link!);
+      if (l) (b as ABlock).link = l; else delete (b as ABlock).link;
+    }
+    if (x.track === "overlays") { const o = b as OBlock; if (o.slide && !ids.has(o.slide)) o.slide = null; else if (o.slide) o.slide = ids.get(o.slide)!; }
+    list(d, x.track).push(b);
+    placed.push({ track: x.track, b });
+    refs.push({ track: x.track, id: b.id });
+  }
+  const keep = new Set(placed.map((x) => x.b.id));
+  for (const x of placed) carve(d, x.track, x.b, keep);
+  sort(d);
+  return { doc: d, refs };
+}
+
+/** Unlink the selected pictures and sounds from their partners / link a picture with the sound under it. */
+export function unlink(doc: QDoc, refs: Ref[]): QDoc {
+  const d = clone(doc);
+  const ids = new Set(withLinked(d, refs).map((r) => r.id));
+  for (const a of d.tracks.audio) if (a.link && (ids.has(a.id) || ids.has(a.link))) delete a.link;
+  return d;
+}
+export function link(doc: QDoc, refs: Ref[]): QDoc {
+  const d = clone(doc);
+  const v = refs.find((r) => r.track === "video"), a = refs.find((r) => r.track === "audio");
+  const vb = v && (find(d, v) as VBlock | undefined), ab = a && (find(d, a) as ABlock | undefined);
+  if (vb && ab) ab.link = vb.id;
+  return d;
 }

@@ -15,6 +15,7 @@ export type QuickPayload = {
   build: { draft: BuildStats | null; final: BuildStats | null };
   brand: { found: boolean; need: string | null; colors: Record<string, string>; note: string | null };
   styles: Record<string, string>;
+  beds?: Record<string, number | null>;   // music bed level (dB under the speech) per sound style
   warnings?: string[];
 };
 export type Step = 1 | 2 | 3 | 4;

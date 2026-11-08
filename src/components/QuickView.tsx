@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, backendUrl, mediaUrl } from "../api";
 import { useStore } from "../store";
-import { end, fpsOf, remove, split, type Block, type VBlock } from "../quickOps";
+import { copy, end, find, fpsOf, link, paste, patch, remove, spliceFades, split, unlink, type Block, type Clip, type VBlock } from "../quickOps";
 import { qPause, qSeek, qToggle, roleOf, ROLE_NAMES, selRange, shownCover, shownDoc, useQuick, fmtT, type QuickPayload } from "../quickStore";
 import { QuickTimeline } from "./QuickTimeline";
 import { QuickSteps } from "./QuickSteps";
@@ -10,6 +10,9 @@ import { cls } from "../util";
 import { cssFilter } from "./ColorPanel";
 
 export const quickUrl = (path: string) => backendUrl(path);
+
+let clipboard: Clip | null = null;   // Ctrl+C / Ctrl+X → Ctrl+V (within this window)
+export const SPLICE_FADE = 0.12;     // seconds per side: «Фейды на склейках»
 
 /** Quick mode: wizard steps on the left, Front/Top monitors on top, the block timeline, the AI window. */
 export function QuickView() {
@@ -56,6 +59,47 @@ export function QuickView() {
       } else if ((cmd === "delete" || cmd === "ripple") && s.sel.length) {
         await s.commit(remove(d, s.sel, cmd === "ripple"), cmd === "ripple" ? "удаление со сдвигом" : "удаление");
         s.set({ sel: [] });
+      } else if ((cmd === "copy" || cmd === "cut") && s.sel.length) {
+        clipboard = copy(d, s.sel);
+        if (cmd === "cut") { await s.commit(remove(d, s.sel, false), "вырезать"); s.set({ sel: [] }); }
+      } else if (cmd === "paste" && clipboard) {
+        const r = paste(d, clipboard, Math.round(s.time * fps));
+        await s.commit(r.doc, `вставка на ${fmtT(s.time)}`);
+        s.set({ sel: r.refs.filter((x) => x.track !== "audio" || !r.refs.some((y) => y.track === "video")) });
+      } else if (cmd === "duplicate" && s.sel.length) {
+        const c = copy(d, s.sel);
+        if (c) {
+          const after = Math.max(...c.blocks.map((x) => end(x.b)));
+          const r = paste(d, c, after);
+          await s.commit(r.doc, "дублировать");
+          s.set({ sel: r.refs.filter((x) => x.track !== "audio" || !r.refs.some((y) => y.track === "video")) });
+        }
+      } else if (cmd.startsWith("rotate") || cmd.startsWith("flip") || cmd === "reset-transform") {
+        const vids = s.sel.filter((r) => r.track === "video");
+        if (!vids.length) return;
+        const label = { "rotate-cw": "повернуть на 90° вправо", "rotate-ccw": "повернуть на 90° влево", "rotate-180": "повернуть на 180°",
+          "flip-h": "отразить по горизонтали", "flip-v": "отразить по вертикали", "reset-transform": "сбросить поворот и отражение" }[cmd] ?? cmd;
+        await s.commit(patch(d, vids, (b) => {
+          const v = b as VBlock;
+          if (cmd === "rotate-cw") v.rotate = ((v.rotate ?? 0) + 90) % 360;
+          if (cmd === "rotate-ccw") v.rotate = ((v.rotate ?? 0) + 270) % 360;
+          if (cmd === "rotate-180") v.rotate = ((v.rotate ?? 0) + 180) % 360;
+          if (cmd === "flip-h") v.flip_h = !v.flip_h;
+          if (cmd === "flip-v") v.flip_v = !v.flip_v;
+          if (cmd === "reset-transform") { delete v.rotate; delete v.flip_h; delete v.flip_v; }
+          if (!v.rotate) delete v.rotate;
+        }), `${label} (${vids.length} бл.)`);
+      } else if (cmd === "fades" || cmd === "fades-off") {
+        const auds = s.sel.flatMap((r) => r.track === "audio" ? [r] : d.tracks.audio.filter((a) => a.link === r.id).map((a) => ({ track: "audio" as const, id: a.id })));
+        const nd = spliceFades(d, auds, cmd === "fades" ? SPLICE_FADE : 0);
+        if (JSON.stringify(nd.tracks.audio) !== JSON.stringify(d.tracks.audio))
+          await s.commit(nd, cmd === "fades" ? (auds.length ? `фейды (${auds.length} бл.)` : "фейды на всех склейках") : "убрать фейды");
+      } else if (cmd === "unlink" && s.sel.length) {
+        await s.commit(unlink(d, s.sel), "отвязать звук от картинки");
+      } else if (cmd === "link") {
+        const v = s.sel.find((r) => r.track === "video"), a = s.sel.find((r) => r.track === "audio");
+        if (v && a && find(d, v) && find(d, a)) await s.commit(link(d, [v, a]), "связать звук с картинкой");
+        else useStore.getState().say("info", "Выделите один блок картинки и один звуковой (Ctrl+клик), потом «Связать».");
       }
     };
     const onCmd = (e: Event) => run((e as CustomEvent).detail);
@@ -65,7 +109,10 @@ export function QuickView() {
       const s = useQuick.getState();
       const d = shownDoc(s);
       const fps = d ? fpsOf(d) : 25;
-      if (e.ctrlKey && e.key.toLowerCase() === "z") { e.preventDefault(); run(e.shiftKey ? "redo" : "undo"); return; }
+      if (e.ctrlKey && e.code === "KeyZ") { e.preventDefault(); run(e.shiftKey ? "redo" : "undo"); return; }
+      // clip commands, by key position so they work in the Russian layout too
+      const ctrl = { KeyC: "copy", KeyX: "cut", KeyV: "paste", KeyD: "duplicate" }[e.code];
+      if (e.ctrlKey && ctrl) { e.preventDefault(); run(ctrl); return; }
       switch (e.key) {
         case " ": e.preventDefault(); qToggle(); break;
         case "s": case "S": case "ы": case "Ы": run("split"); break;
@@ -252,6 +299,11 @@ function Pane({ role, active, v, f, fps, flash }: { role: "front" | "top" | "sid
   // the grade shows at once as a CSS approximation; the exact ffmpeg grade lands in the assembled preview
   const grade = v ? (v.color !== undefined && v.color !== null ? v.color : d?.grade ?? null) : null;
   const filter = cssFilter(grade as never);
+  // turn / mirror from the clip menu — on the block's own picture (a turned 16:9 is scaled to fit, like the render)
+  const own = !!v && src === v.src;
+  const rot = own ? (v!.rotate ?? 0) % 360 : 0;
+  const transform = own && (rot || v!.flip_h || v!.flip_v)
+    ? `rotate(${rot}deg) scale(${rot % 180 ? 9 / 16 : 1}) scale(${v!.flip_h ? -1 : 1}, ${v!.flip_v ? -1 : 1})` : undefined;
   const slide = d ? blockAt(d.tracks.slides, f) : undefined;
   const card = d ? blockAt(d.tracks.overlays, f) : undefined;
   return (
@@ -263,16 +315,17 @@ function Pane({ role, active, v, f, fps, flash }: { role: "front" | "top" | "sid
         {active ? "● " : ""}{ROLE_NAMES[role]}{active ? " · в кадре" : ""}
       </div>
       {src ? (
-        <video ref={vid} key={src} src={mediaUrl("proxy", src)} muted preload="auto" className="w-full h-full object-contain" style={{ filter }} />
+        <video ref={vid} key={src} src={mediaUrl("proxy", src)} muted preload="auto" className="w-full h-full object-contain" style={{ filter, transform }} />
       ) : (
         <div className="absolute inset-0 grid place-items-center text-white/40 text-[12px]">{v ? "нет синхронного кадра" : "—"}</div>
       )}
-      {active && slide && (
+      {active && slide && !(card?.status === "ready" && card.files) && (
         <img src={quickUrl(`/media/quick/slide/${slide.page}`)} alt=""
           className={cls("absolute pointer-events-none", slide.layout === "full" ? "inset-0 w-full h-full object-contain bg-[#FFF9EB]" : "right-[3.6%] top-1/2 -translate-y-1/2 w-[46%] rounded-[6px] shadow-lg")} />
       )}
-      {active && card?.status === "ready" && card.files && <CardOverlay id={card.id} v={card.files.v} offset={(f - card.start) / fps} />}
+      {active && card?.status === "ready" && card.files && <CardOverlay id={card.id} v={card.files.v} />}
       {active && <Sound f={f} fps={fps} />}
+      {active && <Music f={f} fps={fps} />}
       {flash && (
         <div key={flash.n} className="angle-flash absolute inset-0 z-20 grid place-items-center pointer-events-none">
           <span className="px-3 py-1 rounded-[6px] text-white text-[20px] font-semibold shadow-lg" style={{ background: ROLE_VAR[role] }}>
@@ -291,17 +344,10 @@ function Pane({ role, active, v, f, fps, flash }: { role: "front" | "top" | "sid
   );
 }
 
-function CardOverlay({ id, v, offset }: { id: string; v: number; offset: number }) {
-  const el = useRef<HTMLVideoElement>(null);
-  const playing = useQuick((s) => s.playing);
-  useEffect(() => {
-    const x = el.current;
-    if (!x) return;
-    if (Math.abs(x.currentTime - offset) > (playing ? 0.3 : 0.04)) x.currentTime = Math.max(0, offset);
-    if (playing && x.paused) x.play().catch(() => {});
-    if (!playing && !x.paused) x.pause();
-  });
-  return <video ref={el} key={`${id}${v}`} src={quickUrl(`/media/quick/card/${id}/preview?v=${v}`)} muted className="absolute inset-0 w-full h-full object-contain pointer-events-none" />;
+/** The card in the live monitor is its still poster: a second video decoding on top of the camera froze
+ *  playback. The animated card is in «Собранное превью» and the export. */
+function CardOverlay({ id, v }: { id: string; v: number }) {
+  return <img key={`${id}${v}`} src={quickUrl(`/media/quick/card/${id}/poster?v=${v}`)} alt="" className="absolute inset-0 w-full h-full object-contain pointer-events-none" />;
 }
 
 /** The speech under the playhead: the sound block's source (lav proxy or camera) at its own time. */
@@ -311,15 +357,42 @@ function Sound({ f, fps }: { f: number; fps: number }) {
   const a = d ? blockAt(d.tracks.audio, f) : undefined;
   const el = useRef<HTMLVideoElement>(null);
   const at = a ? a.in + (f - a.start) / fps : 0;
+  // the block's fades (and a short ramp at every cut, like the build's anti-click) as volume
+  const gain = a ? Math.max(0, Math.min(1, (f - a.start) / fps / Math.max(0.03, a.fade_in ?? 0), (a.start + a.len - f) / fps / Math.max(0.03, a.fade_out ?? 0))) : 1;
   useEffect(() => {
     const x = el.current;
     if (!x || !a) return;
+    x.volume = gain;
     if (Math.abs(x.currentTime - at) > (q.playing ? 0.2 : 0.04)) x.currentTime = Math.max(0, at);
     if (q.playing && x.paused) x.play().catch(() => {});
     if (!q.playing && !x.paused) x.pause();
   });
   if (!a) return null;
   return <video ref={el} key={a.src} src={mediaUrl("proxy", a.src)} preload="auto" className="hidden" />;
+}
+
+/** The music bed in the live monitor: the chosen track at program time (looped like the build), at the
+ *  sound block's bed level. An approximation — the exact ducked mix is in «Собранное превью». */
+function Music({ f, fps }: { f: number; fps: number }) {
+  const q = useQuick();
+  const d = shownDoc(q);
+  const el = useRef<HTMLAudioElement>(null);
+  const tid = d?.music?.track;
+  const a = d ? blockAt(d.tracks.audio, f) : undefined;
+  const bed = a ? q.data?.beds?.[a.style ?? "clean"] : null;
+  const t = f / fps;
+  useEffect(() => {
+    const x = el.current;
+    if (!x || !tid) return;
+    // speech is around -14 LUFS and an unmastered track near -10..-14: the style's dB plus a little more duck
+    x.volume = bed == null ? 0 : Math.min(1, 10 ** ((bed - 6) / 20));
+    const at = x.duration ? t % x.duration : t;
+    if (Math.abs(x.currentTime - at) > (q.playing ? 0.4 : 0.05)) x.currentTime = Math.max(0, at);
+    if (q.playing && x.paused && bed != null) x.play().catch(() => {});
+    if ((!q.playing || bed == null) && !x.paused) x.pause();
+  });
+  if (!tid) return null;
+  return <audio ref={el} key={tid} src={backendUrl(`/media/music/${tid}`)} preload="auto" className="hidden" />;
 }
 
 function Assembled({ url }: { url: string }) {

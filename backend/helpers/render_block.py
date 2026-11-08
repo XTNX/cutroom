@@ -46,7 +46,10 @@ def build(j: dict, hw_decode: bool) -> list[str]:
         if hw_decode:
             cmd += ["-hwaccel", "cuda"]
         cmd += ["-ss", f"{float(j['in']):.4f}", "-i", j["src"]]
-        chain = ([vu.TONEMAP_CHAIN] if j.get("hdr") else []) + [
+        # timeline clip settings: turn and mirror before fitting into the frame (a turned 16:9 gets side bars)
+        turn = {90: ["transpose=1"], 180: ["hflip", "vflip"], 270: ["transpose=2"]}.get(int(j.get("rot") or 0) % 360, [])
+        turn += (["hflip"] if j.get("fh") else []) + (["vflip"] if j.get("fv") else [])
+        chain = ([vu.TONEMAP_CHAIN] if j.get("hdr") else []) + turn + [
             f"scale={w}:{h}:force_original_aspect_ratio=decrease", f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={PAD}", "setsar=1"]
         if j.get("grade"):
             chain.append(j["grade"])

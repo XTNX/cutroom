@@ -588,6 +588,8 @@ def schedule_preview(p: Project, delay: float = 4.0) -> Job | None:
     from .stages import run_render_preview
     if not edl.strategy_approved(p):
         return None
+    if quick_routes.get_mode(p) == "quick":   # the full-mode render is off while quick mode is in use
+        return None
     for j in queue.active():
         if j.kind == "preview" and j.status == "queued":
             j.not_before = time.time() + delay
@@ -883,6 +885,11 @@ def put_color(req: ColorPut):
 
 
 _frame_slots = threading.BoundedSemaphore(3)   # preset thumbnails ask for many stills at once
+# stills wait for a slot in the shared request threads; a long queue of them starved media streaming
+# (proxy playback froze), so past this many waiting the request is turned away and the client asks again
+_FRAME_WAIT_MAX = 6
+_frame_waiting = 0
+_frame_wait_lock = threading.Lock()
 
 
 @app.get("/media/frame")
@@ -909,15 +916,24 @@ def media_frame(source: str, time: float, g: str = "", graded: int = 1, w: int =
     d.mkdir(parents=True, exist_ok=True)
     out = d / f"{key}.jpg"
     if not out.exists():
+        global _frame_waiting
         tmp = d / f"{key}.{threading.get_ident()}.part.jpg"
-        with _frame_slots:
-            if not out.exists():
-                try:
-                    frame(Path(s["path"]), time, grade, bool(((s["probe"] or {}).get("video") or {}).get("hdr")), tmp, width)
-                    _os.replace(tmp, out)
-                except (RuntimeError, OSError) as e:
-                    tmp.unlink(missing_ok=True)
-                    raise HTTPException(500, f"кадр не получился: {e}") from e
+        with _frame_wait_lock:
+            if _frame_waiting >= _FRAME_WAIT_MAX:
+                raise HTTPException(503, "кадры ещё готовятся", headers={"Retry-After": "2"})
+            _frame_waiting += 1
+        try:
+            with _frame_slots:
+                if not out.exists():
+                    try:
+                        frame(Path(s["path"]), time, grade, bool(((s["probe"] or {}).get("video") or {}).get("hdr")), tmp, width)
+                        _os.replace(tmp, out)
+                    except (RuntimeError, OSError) as e:
+                        tmp.unlink(missing_ok=True)
+                        raise HTTPException(500, f"кадр не получился: {e}") from e
+        finally:
+            with _frame_wait_lock:
+                _frame_waiting -= 1
         _prune_frames(d)
     return Response(out.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 

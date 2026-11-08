@@ -139,8 +139,10 @@ export const useStore = create<State>((set, get) => ({
     try {
       const p = await api.post<ProjectInfo>("/api/project/open", { path, files });
       if (p.dir) window.cutroom?.setProjectDir(p.dir);
+      // the project's own mode first: only that section mounts (quick and full never run side by side)
+      const appMode = await api.get<{ mode: AppMode }>("/api/quick").then((q) => q.mode).catch(() => "full" as AppMode);
       get().loadSync(); get().loadStrategy(); get().loadEdl(); get().loadMarkers(); get().loadAudio();
-      set({ project: { ...p, open: true }, sources: p.sources ?? [], transcripts: {}, peaks: {}, selected: null });
+      set({ project: { ...p, open: true }, appMode, sources: p.sources ?? [], transcripts: {}, peaks: {}, selected: null });
       const first = p.sources?.find((s) => !s.duplicate_of);
       if (first) get().select(first.id);
     } catch (e) {

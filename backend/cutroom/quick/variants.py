@@ -14,7 +14,7 @@ from .. import gfx
 from ..brand import STYLES as CARD_STYLES, gfx_brand
 from ..jobs import Job
 from . import model
-from .build import SR, STYLES as SOUND_STYLES, ff
+from .build import DUCK, MUSIC_PREP, SR, STYLES as SOUND_STYLES, ff
 from .cards import card_dir, patch_card
 from .model import fps_of, qdir
 
@@ -58,8 +58,8 @@ def sound_variants(project, job: Job, aid: str, seconds: float = 10.0) -> dict:
         label = "[v]"
         if st["bed"] is not None and music and Path(music).exists():
             inputs += ["-stream_loop", "-1", "-i", music]
-            graph += (f";[1:a]aresample={SR},aformat=channel_layouts=stereo,volume={st['bed']}dB,atrim=end={dur:.3f}[m];"
-                      "[v]asplit=2[v1][sc];[m][sc]sidechaincompress=threshold=0.02:ratio=6:attack=40:release=600[md];"
+            graph += (f";[1:a]{MUSIC_PREP},volume={st['bed']}dB,atrim=end={dur:.3f}[m];"
+                      f"[v]asplit=2[v1][sc];[m][sc]{DUCK}[md];"
                       "[v1][md]amix=inputs=2:duration=first:normalize=0[mix]")
             label = "[mix]"
         graph += f";{label}loudnorm=I=-14:TP=-1:LRA=11[o]"

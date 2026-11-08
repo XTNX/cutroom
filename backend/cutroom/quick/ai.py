@@ -310,10 +310,20 @@ def cut_ranges(project, doc: dict, prompt: str, sids: set[str] | None = None, no
     ]
     out: agent.QuickCut = agent.run("quickcut", "\n\n".join(prompt_parts), timeout=900, log_dir=project.edit)  # type: ignore[assignment]
     raw = []
+    eff = model.offsets(project)
     for r in out.ranges:
-        if r.source not in project.sources or r.source not in usable:
+        sid, start, end = r.source, r.start, r.end
+        if sid in project.sources and model.role(doc, project, sid) == "lav":
+            # cut on the lav transcript → the same moment on the synced camera
+            take, e = eff[sid]
+            cam = next((c for w in ("front", "side", "top", "other") if (c := model.covering(project, doc, take, start + e, end + e, w))), None)
+            if not cam:
+                continue
+            shift = e - eff[cam][1]
+            sid, start, end = cam, start + shift, end + shift
+        if sid not in project.sources or sid not in usable:
             continue
-        item = {"source": r.source, "start": r.start, "end": r.end, "role": r.angle, "reason": r.reason}
+        item = {"source": sid, "start": start, "end": end, "role": r.angle, "reason": r.reason}
         if r.broll_source in project.sources and r.broll_start is not None and model.role(doc, project, r.broll_source) == "top":
             item["picture"] = {"source": r.broll_source, "start": float(r.broll_start)}
         raw.append(item)

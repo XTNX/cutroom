@@ -64,15 +64,21 @@ def build_spec(project, job: Job, oid: str, request: str | None = None) -> dict:
     patch_card(project, oid, {"status": "working", "error": None})
     fps = fps_of(doc)
     parts = [f"Спецификация карточки {oid}, длительность {o['len'] / fps:.1f} с.",
-             agent.wrap_data("задумано", o.get("hint") or "(по смыслу речи)"),
-             agent.wrap_data("речь вокруг момента появления", words_at(project, doc, o["start"], o["start"] + o["len"]))]
+             agent.wrap_data("задумано", o.get("hint") or "(по смыслу речи)")]
+    speech = words_at(project, doc, o["start"], o["start"] + o["len"])
     images = None
     pg = page_of(doc, o.get("page")) if o.get("page") else None
     if pg:
-        parts.append(agent.wrap_data(f"слайд {pg['n']}: текст", pg.get("text") or "(текстового слоя нет — смотри картинку слайда)"))
+        # a card «по слайду» conveys the slide: its figures and labels; the speech only says which of them matter now
+        src = "из базы знаний (слайд — картинка)" if pg.get("text_src") == "kb" else "со слайда"
+        parts.append(agent.wrap_data(f"слайд {pg['n']}: текст {src}", pg.get("text") or "(текстового слоя нет — смотри картинку слайда)"))
         if not pg.get("text"):
             images = [Path(pg["image"])]
-        parts.append("Карточка строится по этому слайду: возьми с него главное, коротко, и оживи анимацией.")
+        parts.append(agent.wrap_data("речь в этот момент (только чтобы выбрать, что со слайда важно сейчас)", speech))
+        parts.append("Карточка строится по этому слайду: цифры, подписи и заголовок бери со слайда, не подменяй их "
+                     "тем, что звучит в речи. Выбери с него главное (2–5 пунктов или одно сравнение), коротко, и оживи анимацией.")
+    else:
+        parts.append(agent.wrap_data("речь вокруг момента появления", speech))
     if isinstance(o.get("spec"), dict):
         parts.append(agent.wrap_data("прошлая версия карточки", json.dumps(o["spec"], ensure_ascii=False)))
     if request:
