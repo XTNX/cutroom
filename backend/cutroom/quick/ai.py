@@ -83,10 +83,6 @@ def context(project, doc: dict, sel: tuple[int, int] | None) -> list[str]:
     dec = decisions_text(project)
     if dec:
         out.append(agent.wrap_data("решения проекта (договорённости из прошлых раундов правок)", dec))
-    lv = (doc.get("live") or {}).get("spec")
-    if lv:
-        out.append(agent.wrap_data("живая инфографика", f"есть: «{lv.get('title', '')}», месяцев {len(lv.get('months') or [])}, "
-                                                        f"карточек {len(lv.get('cards') or [])}, окон слайда {len(lv.get('windows') or [])}"))
     from ..brand import presets
     out.append(agent.wrap_data("пресеты цвета", ", ".join(f"{p['id']} ({p['name']})" for p in presets())))
     return out
@@ -246,8 +242,6 @@ def apply_ops(project, doc: dict, plan_ops: list, sel: tuple[int, int] | None, r
                     follow["requests"][c["id"]] = o["text"]
                 elif isinstance(c.get("spec"), dict):
                     follow["draw"].append(c["id"])
-        elif kind == "live":   # the live layer is re-specified by its own agent after «Применить»
-            follow["live"] = (follow.get("live") + "; " if follow.get("live") else "") + (o.get("text") or "")
         elif kind == "recut":
             if run_recut is None:
                 warn.append("Пересборка фраз доступна из окна запросов.")

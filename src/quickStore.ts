@@ -17,7 +17,6 @@ export type QuickPayload = {
   styles: Record<string, string>;
   beds?: Record<string, number | null>;   // music bed level (dB under the speech) per sound style
   warnings?: string[];
-  live?: { on: boolean; preview?: string | null };
 };
 export type Step = 1 | 2 | 3 | 4 | 5;
 export type Dialog = { kind: "card"; id: string } | { kind: "sound"; id: string } | { kind: "slides"; at: number; replace?: string } | null;
@@ -30,14 +29,8 @@ export type Review = { rounds: { n: number; version: number; sent: string; file:
   journal: { version: number; when: string; rows: { asked: string; done: string; status: string; at: number | null }[] }[];
   current_version: number | null; kinds: Record<string, string> };
 
-export type LiveT = { label?: string; title?: string; text?: string; kind?: string; group?: string; n?: number | null; t: number | null; t1?: number | null; ht?: number | null };
-export type LiveStatus = { on: boolean; spec?: Record<string, unknown>; warnings?: string[]; preview?: string | null;
-  layer?: { start: number | null; months: LiveT[]; marks: LiveT[]; cards: LiveT[]; windows: { kind: string; group: string; t: number; t1: number }[];
-    intro: { t0: number; t1: number; title: string } | null; cta: { t0: number; t1: number; title: string } | null } | null };
-
 type QState = {
   review: Review | null;           // review rounds: the customer's notes on timecodes, the journal, the decisions
-  live: LiveStatus | null;         // the live infographic layer: spec + resolved times (for the panel, the timeline, the monitor)
   data: QuickPayload | null;
   draft: QDoc | null;              // a drag in progress (shown instead of data.doc until committed)
   propDoc: QDoc | null;            // the AI proposal's document (shown while a proposal is open)
@@ -58,7 +51,7 @@ type QState = {
 };
 
 export const useQuick = create<QState>((set, get) => ({
-  review: null, live: null, data: null, draft: null, propDoc: null, propCover: {}, sel: [], step: 1, time: 0, playing: false, assembled: false,
+  review: null, data: null, draft: null, propDoc: null, propCover: {}, sel: [], step: 1, time: 0, playing: false, assembled: false,
   dialog: null, overwrite: false, ripple: false, snap: true,
   set: (p) => set(p),
   load: async () => {
@@ -66,8 +59,6 @@ export const useQuick = create<QState>((set, get) => ({
     set({ data: d });
     if (d.proposal) await get().loadProposal(); else set({ propDoc: null, propCover: {} });
     api.get<Review>("/api/quick/review").then((r) => set({ review: r })).catch(() => {});
-    if (d.live?.on) api.get<LiveStatus>("/api/quick/live").then((l) => set({ live: l })).catch(() => {});
-    else set({ live: null });
   },
   loadProposal: async () => {
     const r = await api.get<{ proposal: Proposal | null; doc: QDoc | null; coverage: Cover }>("/api/quick/proposal");

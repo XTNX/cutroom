@@ -370,106 +370,6 @@ function NoteRow({ n, call }: { n: RNote; call: (fn: () => Promise<Review>) => P
   );
 }
 
-// ---------------------------------------------------------------- live infographic (the brand reference's single layer)
-
-/** «Живая инфографика»: one brand layer over the whole film — roadmap band (front: over the head, top: narrow over
- *  the board, full-slide windows), step / stage cards, intro, CTA, brand subtitles; every element on its word. */
-function LivePanel() {
-  const q = useQuick();
-  const jobs = useStore((s) => s.jobs);
-  const d = shownDoc(q);
-  const [page, setPage] = useState<number | null>(null);
-  const [req, setReq] = useState("");
-  const live = q.live;
-  const job = jobs.filter((j) => j.kind === "qlive").at(-1);
-  const busy = !!job && (job.status === "running" || job.status === "queued");
-  const prev = jobs.filter((j) => j.kind === "qlive-preview").at(-1);
-  const drawing = !!prev && (prev.status === "running" || prev.status === "queued");
-  const locked = !q.data?.gate_open || !!q.propDoc;
-  const pres = d?.presentation;
-  useEffect(() => { if (job?.status === "done" || job?.status === "error") useQuick.getState().load().catch(() => {}); }, [job?.status]);
-  useEffect(() => { if (job?.status === "error") useStore.getState().say("err", `Живая инфографика: ${job.error ?? "ошибка"}`); }, [job?.status]);
-  if (!d) return null;
-  const build = async (request?: string) => {
-    try { await api.post("/api/quick/live/build", { page: page ?? undefined, request: request || undefined }); setReq(""); }
-    catch (e) { useStore.getState().say("err", (e as Error).message); }
-  };
-  const put = async (body: Record<string, unknown>) => {
-    try { const r = await api.put<QuickPayload & { live_status: unknown }>("/api/quick/live", body); q.set({ data: r }); await useQuick.getState().load(); }
-    catch (e) { useStore.getState().say("err", (e as Error).message); }
-  };
-  const L = live?.layer;
-  const when = (t: number | null | undefined) => (t === null || t === undefined ? "—" : fmtT(t));
-  const go = (t: number | null | undefined) => { if (t !== null && t !== undefined) qSeek(t); };
-  const spec = (live?.spec ?? {}) as { title?: string; subtitles?: boolean; months?: { label: string; word: string }[]; cards?: { title: string; word: string; group: string; n?: number }[];
-    marks?: { text: string; word: string; kind: string }[]; windows?: { kind: string; word: string; until_word: string }[] };
-  return (
-    <div className="rounded-[8px] border border-accent/50 p-2.5 space-y-2">
-      <div className="flex items-center gap-2">
-        <H>Живая инфографика</H>
-        <span className="flex-1" />
-        {live?.on && <span className="text-[11px] text-dim">{drawing ? "рисую превью…" : "на всём ролике"}</span>}
-      </div>
-      {!live?.on ? (
-        <>
-          <p className="text-dim text-[11.5px]">Один фирменный слой на весь ролик, как в эталоне: лента дорожной карты над головой спикера (на столе — узкая над доской),
-            месяцы и даты по голосу, запуск «ДД», карточки шагов, окна полного слайда, заставка, CTA, субтитры в бренде. Каждый элемент привязан к слову в речи.</p>
-          {pres?.pages?.length ? (
-            <select className="input w-full h-7" value={page ?? ""} onChange={(e) => setPage(e.target.value ? +e.target.value : null)} aria-label="Слайд для инфографики">
-              <option value="">слайд: выберите (например, «Дорожная карта»)</option>
-              {pres.pages.map((pg) => <option key={pg.n} value={pg.n}>{pg.n}: {(pg.text || "картинка").slice(0, 50)}</option>)}
-            </select>
-          ) : <p className="text-warn text-[11.5px]">Презентация не загружена (шаг 1) — слой соберётся только по речи.</p>}
-          <textarea className="input w-full py-1.5 leading-snug" style={{ height: 64 }} value={req} onChange={(e) => setReq(e.target.value)}
-            placeholder="Пожелания: «начало с „Итак“, запуск подсветить на 1:45, с 2:40 полный слайд, CTA в конце с затратами»" />
-          <button className="btn btn-primary w-full justify-center" disabled={locked || busy} onClick={() => build(req)}>
-            {busy ? `ИИ собирает слой… ${job?.eta ? `~${Math.ceil(job.eta)} с` : ""}` : "Собрать по слайду и речи"}
-          </button>
-        </>
-      ) : (
-        <>
-          <div className="text-[11.5px] space-y-0.5 max-h-[220px] overflow-y-auto">
-            <div className="text-fg truncate">«{spec.title}» · лента с {when(L?.start)}</div>
-            {L?.intro && <Row label={`Заставка «${L.intro.title}»`} t={L.intro.t0} go={go} extra={`${(L.intro.t1 - L.intro.t0).toFixed(1)} с`} />}
-            {(L?.months ?? []).map((m, i) => <Row key={"m" + i} label={`Месяц ${m.label}`} word={spec.months?.[i]?.word} t={m.t} go={go} />)}
-            {(L?.marks ?? []).map((m, i) => <Row key={"k" + i} label={`${m.kind === "launch" ? "Запуск" : m.kind === "now" ? "Сейчас" : "Дата"} ${m.text ?? ""}`} word={spec.marks?.[i]?.word} t={m.t}
-              go={go} extra={m.ht !== null && m.ht !== undefined ? `подсветка ${fmtT(m.ht)}` : undefined} />)}
-            {(L?.cards ?? []).map((c, i) => <Row key={"c" + i} label={`${c.group === "steps" ? `Шаг ${c.n ?? ""}` : "Этап"}: ${c.title}`} word={spec.cards?.[i]?.word} t={c.t} go={go}
-              extra={c.t1 !== null && c.t1 !== undefined ? `до ${fmtT(c.t1)}` : undefined} />)}
-            {(L?.windows ?? []).map((w, i) => <Row key={"w" + i} label={w.kind === "full" ? `Полный слайд (${w.group === "steps" ? "шаги" : w.group === "stages" ? "этапы" : "лента"})` : "Крупная лента"}
-              t={w.t} go={go} extra={`до ${fmtT(w.t1)}`} />)}
-            {L?.cta && <Row label={`CTA «${L.cta.title}»`} t={L.cta.t0} go={go} extra={`${(L.cta.t1 - L.cta.t0).toFixed(1)} с`} />}
-          </div>
-          {!!live.warnings?.length && <p className="text-warn text-[11px]">{live.warnings.slice(0, 4).join(" · ")}</p>}
-          <label className="flex items-center gap-2 text-[11.5px]">
-            <input type="checkbox" checked={spec.subtitles !== false} disabled={locked} onChange={(e) => put({ subtitles: e.target.checked })} />
-            Субтитры в бренде (Jura, кремовый на хаки, цифры оранжевые)
-          </label>
-          <textarea className="input w-full py-1.5 leading-snug" style={{ height: 56 }} value={req} onChange={(e) => setReq(e.target.value)}
-            placeholder="Правки с таймкодами текущей версии: «0:18–0:25 полный слайд с шагом 1», «плашку не уменьшать до 1:55»" />
-          <div className="flex gap-1.5">
-            <button className="btn btn-primary btn-sm flex-1 justify-center" disabled={locked || busy || !req.trim()} onClick={() => build(req)}>{busy ? "ИИ правит…" : "Поправить"}</button>
-            <button className="btn btn-sm" disabled={locked || busy} onClick={() => { if (confirm("Убрать живой слой со всего ролика? (Отменить — Ctrl+Z)")) put({}); }}>Убрать</button>
-          </div>
-          <p className="text-dim text-[11px]">Элементы стоят на своих словах: после перенарезки они переедут вместе с речью. Кликом по строке — к моменту.</p>
-        </>
-      )}
-    </div>
-  );
-}
-
-function Row({ label, word, t, go, extra }: { label: string; word?: string; t: number | null | undefined; go: (t: number | null | undefined) => void; extra?: string }) {
-  return (
-    <button className={cls("w-full flex items-center gap-1.5 text-left hover:text-fg", t === null || t === undefined ? "text-warn" : "text-dim")} onClick={() => go(t)}
-      title={word ? `Привязано к слову «${word}»` : undefined}>
-      <span className="tabular-nums w-[52px] shrink-0">{t === null || t === undefined ? "нет" : fmtT(t)}</span>
-      <span className="truncate flex-1 text-fg/90">{label}</span>
-      {word && <span className="truncate max-w-[70px] italic">«{word}»</span>}
-      {extra && <span className="shrink-0">{extra}</span>}
-    </button>
-  );
-}
-
 // ---------------------------------------------------------------- 2. cut
 
 function StepCut() {
@@ -704,7 +604,6 @@ function StepSlides() {
 
   return (
     <>
-      <LivePanel />
       <div>
         <H>Слайды</H>
         {!pres ? (

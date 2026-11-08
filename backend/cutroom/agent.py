@@ -49,7 +49,6 @@ ROLE_MODELS: dict[str, str] = {
     "quickcut": OPUS,    # quick mode: the cut by prompt
     "fragment": OPUS,    # re-editing a large selected block
     "slot": OPUS,        # infographic cards
-    "live": OPUS,        # the live infographic layer (band, cards, full-slide windows, intro, CTA)
     "strategy": SONNET,  # analysis of the sources → strategy
     "quick": SONNET,     # technical prompt → timeline operations
     "ask": HAIKU,        # questions about the strategy: a text answer
@@ -57,7 +56,7 @@ ROLE_MODELS: dict[str, str] = {
 }
 # when the limit of one model is reached, one step down (a heavy task never drops to Haiku)
 FALLBACK = {OPUS: SONNET, SONNET: HAIKU}
-NO_HAIKU = {"editor", "quickcut", "fragment", "slot", "live"}
+NO_HAIKU = {"editor", "quickcut", "fragment", "slot"}
 QUOTA_RX = re.compile(r"usage limit|limit reached|limit will reset|rate.?limit|credit balance|out of (extra )?usage|quota|"
                       r"insufficient|token(s)? (limit|exhausted)|exceeded|\b429\b|billing", re.I)
 
@@ -172,91 +171,8 @@ class SlotSpec(BaseModel):
     layout: Literal["side", "full"] = "side"
 
 
-# ---- live infographic (one full-frame layer over the whole film, like the brand reference)
-# Every element is anchored to a spoken word: `word` + `at` (seconds of the finished video, from the
-# speech we show the agent). The script snaps it to that word in the transcript and keeps it on the
-# word through any re-cut.
-
-
-class LiveMonth(BaseModel):
-    label: str                      # «Ноябрь»
-    word: str = ""                  # the word that makes it appear («ноябре»)
-    at: float | None = None
-
-
-class LiveMark(BaseModel):
-    kind: Literal["date", "launch", "now"] = "date"
-    text: str                       # «4–15.12», «ДД», «сейчас»
-    caption: str = ""               # small caps under the mark («РАССЫЛКА», «ЗАПУСК»)
-    month: int = 0                  # index into months
-    pos: float = 0.5                # 0…1 inside the month column
-    word: str = ""
-    at: float | None = None
-    highlight_word: str = ""        # launch: the moment it lights up (pulse rings, orange fill)
-    highlight_at: float | None = None
-
-
-class LiveCard(BaseModel):
-    group: Literal["stages", "steps"] = "steps"   # stages: plan stages under months, no numbers; steps: numbered actions
-    n: int | None = None            # steps: «Шаг N»
-    title: str
-    text: str = ""
-    tag: str = ""                   # «ЭКРАН», «ОБЯЗАТЕЛЬНО»
-    note: str = ""                  # «по 3 000 ₽»
-    date: str = ""                  # from the presentation («1–12.11.26»), in an orange outline
-    month: int | None = None        # the month column it stands under (full slide)
-    side: Literal["left", "right", "auto"] = "auto"
-    word: str = ""
-    at: float | None = None
-    until_word: str = ""
-    until_at: float | None = None   # null = stays until the layer changes
-
-
-class LiveWindow(BaseModel):
-    kind: Literal["full", "band"] = "full"   # full: the band opens into the whole cream slide; band: keep the big band (e.g. on the table)
-    group: Literal["stages", "steps", "none"] = "stages"
-    word: str = ""
-    at: float | None = None
-    until_word: str = ""
-    until_at: float | None = None
-
-
-class LiveIntro(BaseModel):
-    title: str
-    subtitle: str = ""
-    page: int | None = None         # the slide shown as the poster on the right
-    seconds: float = 6.0
-
-
-class LiveCtaLine(BaseModel):
-    text: str
-    value: str = ""                 # «~20 000 ₽», «бесплатно»
-
-
-class LiveCta(BaseModel):
-    title: str
-    lines: list[LiveCtaLine] = Field(default_factory=list, max_length=6)
-    word: str = ""
-    at: float | None = None
-    seconds: float = 6.0
-
-
-class LiveSpec(BaseModel):
-    title: str                      # the slide's title, on the band and on the full slide
-    months: list[LiveMonth] = Field(default_factory=list, max_length=6)
-    marks: list[LiveMark] = Field(default_factory=list, max_length=12)
-    cards: list[LiveCard] = Field(default_factory=list, max_length=12)
-    windows: list[LiveWindow] = Field(default_factory=list, max_length=10)
-    intro: LiveIntro | None = None
-    cta: LiveCta | None = None
-    start_word: str = ""            # the band appears with this word
-    start_at: float | None = None
-    subtitles: bool = True
-    note: str = ""                  # what was changed (for the person)
-
-
 class QuickOp(BaseModel):
-    op: Literal["angle", "color", "audio", "delete", "overlay", "overlay_style", "slide", "recut", "live"]
+    op: Literal["angle", "color", "audio", "delete", "overlay", "overlay_style", "slide", "recut"]
     start: float | None = None      # seconds of the finished video; null = the selection (or the whole video)
     end: float | None = None
     angle: Literal["front", "top", "side", ""] = ""
@@ -302,10 +218,10 @@ class Answer(BaseModel):
     suggested_edit: str = ""
 
 
-KB_ROLES = {"strategy", "editor", "quickcut", "fragment", "slot", "quick", "live"}
+KB_ROLES = {"strategy", "editor", "quickcut", "fragment", "slot", "quick"}
 
 SCHEMAS: dict[str, type[BaseModel]] = {"strategy": Strategy, "editor": EditorOut, "ask": Answer, "fragment": FragmentOut, "slot": SlotSpec,
-                                     "quick": QuickPlan, "quickcut": QuickCut, "live": LiveSpec}
+                                     "quick": QuickPlan, "quickcut": QuickCut}
 
 
 # ---------------------------------------------------------------- CLI
@@ -352,7 +268,7 @@ def wrap_data(label: str, text: str) -> str:
     return f'<data name="{label}">\n{safe}\n</data>'
 
 
-def run(role: Literal["strategy", "editor", "ask", "fragment", "slot", "quick", "quickcut", "live"], user_prompt: str, timeout: float = 600,
+def run(role: Literal["strategy", "editor", "ask", "fragment", "slot", "quick", "quickcut"], user_prompt: str, timeout: float = 600,
         log_dir: Path | None = None, images: list[Path] | None = None) -> BaseModel:
     """One structured call. On a usage-limit answer the call is repeated once on the next cheaper
     model (Opus → Sonnet → Haiku; heavy roles never go below Sonnet); if that one is out too,

@@ -35,7 +35,7 @@ RENDER_VERSION = 3
 SR = 48000
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 PROFILES = {"draft": {"w": 1280, "h": 720, "quality": "draft"}, "final": {"w": 1920, "h": 1080, "quality": "final"},
-            # the reference master: 3840×2160 HEVC Main10 (the live layer is drawn at 4K too)
+            # the 4K master: 3840×2160 HEVC Main10
             "master": {"w": 3840, "h": 2160, "quality": "final", "codec": "hevc10"}}
 
 # speech styles: the clean-up chain (cutroom.audio) + an optional music bed level under this block
@@ -109,21 +109,15 @@ def overlay_pieces(project, doc: dict, s0: int, n: int) -> list[dict]:
 
 
 def segments(project, doc: dict, profile: str) -> list[dict]:
-    from . import live
     fps = fps_of(doc)
     vids = doc["tracks"]["video"]
     end = max([b["start"] + b["len"] for t in ("video", "audio") for b in doc["tracks"][t]] or [0])
-    end = max(end, live.end_frames(project, doc))   # the CTA page may run past the last block
     enc = encoder()
     prof = PROFILES[profile]
     out, cur = [], 0
-    lay, _ = live.layer(project, doc)
 
     def add(s0: int, n: int, v: dict | None):
         pieces = overlay_pieces(project, doc, s0, n)
-        lp = live.piece(project, doc, lay, s0, n, prof["w"], prof["h"], profile)
-        if lp:   # the live layer goes on top of slides and cards (its subtitles are the topmost thing)
-            pieces.append(lp)
         src = project.sources.get(v["src"]) if v else None
         hdr = bool((((src or {}).get("probe") or {}).get("video") or {}).get("hdr"))
         grade = build_filter((v.get("color") if v and v.get("color") is not None else doc.get("grade"))) if v else ""
@@ -137,7 +131,7 @@ def segments(project, doc: dict, profile: str) -> list[dict]:
         out.append({"hash": h, "file": f, "start": s0, "frames": n, "block": v["id"] if v else None, "src": v["src"] if v else None,
                     "job": {"out": str(f), "frames": n, "rate": doc["rate"], **prof, "encoder": enc,
                             "src": (src or {}).get("path"), "in": v["in"] if v else 0, "hdr": hdr, "grade": grade, **tf,
-                            "overlays": [{k: p[k] for k in ("file", "image", "offset", "skip", "dur", "live") if k in p} for p in pieces]}})
+                            "overlays": [{k: p[k] for k in ("file", "image", "offset", "skip", "dur")} for p in pieces]}})
 
     for v in vids:
         if v["start"] > cur:

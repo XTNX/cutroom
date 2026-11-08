@@ -80,17 +80,8 @@ def build(j: dict, hw_decode: bool) -> list[str]:
     return cmd
 
 
-def live_slices(j: dict) -> None:
-    """The live infographic slice of this segment is drawn first, if it isn't cached yet."""
-    for ov in j.get("overlays") or []:
-        if ov.get("live") and not Path(ov["file"]).exists():
-            from gfx_live import render as draw_live
-            draw_live(ov["live"])
-
-
 def main() -> None:
     j = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    live_slices(j)
     out = Path(j["out"])
     out.parent.mkdir(parents=True, exist_ok=True)
     part = out.with_name(out.stem + ".part" + out.suffix)

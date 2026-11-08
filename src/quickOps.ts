@@ -18,7 +18,6 @@ export type Block = VBlock | ABlock | SBlock | OBlock;
 export type QDoc = {
   version: number; rate: string; roles: Record<string, string>; grade: Grade | null;
   music: { track: string; path: string; title: string; flat?: boolean } | null;
-  live?: Record<string, unknown>;
   presentation: { file: string; name: string; pages: { n: number; text: string; text_src?: string }[]; text_note?: string | null } | null;
   tracks: { video: VBlock[]; audio: ABlock[]; slides: SBlock[]; overlays: OBlock[] };
   meta: { version_id?: number; strategy_hash?: string };

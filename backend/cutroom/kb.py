@@ -332,13 +332,7 @@ def _quick_facts(project) -> dict:
               "style": o.get("style") or "cream", "at": _fmt(o["start"] / fps), "ready": o.get("status") == "ready"}
              for o in d["tracks"]["overlays"]]
     slides = [{"page": s["page"], "layout": s.get("layout", "side"), "at": _fmt(s["start"] / fps)} for s in d["tracks"]["slides"]]
-    lv = (d.get("live") or {}).get("spec") or {}
-    live = {"title": lv.get("title"), "months": [m.get("label") for m in lv.get("months") or []],
-            "steps": [c.get("title") for c in lv.get("cards") or [] if c.get("group") == "steps"],
-            "stages": [c.get("title") for c in lv.get("cards") or [] if c.get("group") == "stages"],
-            "windows": len(lv.get("windows") or []), "intro": bool(lv.get("intro")), "cta": bool(lv.get("cta")),
-            "subtitles": bool(lv.get("subtitles", True))} if lv else None
-    return {"live": live, "grade": grade, "own_grades": own, "blocks": len(d["tracks"]["video"]), "per_role": per_role, "styles": styles,
+    return {"grade": grade, "own_grades": own, "blocks": len(d["tracks"]["video"]), "per_role": per_role, "styles": styles,
             "music": (d.get("music") or {}).get("title"), "cards": cards, "slides": slides,
             "presentation": (d.get("presentation") or {}).get("name")}
 
@@ -393,10 +387,6 @@ def render_note(project, stats: dict, mode: str = "quick", emergency: bool = Fal
         f"- Звук: {sty}; музыка: {facts.get('music') or 'нет'}",
         f"- Презентация: {facts.get('presentation') or 'нет'}; слайды: {slides}",
         "- Карточки:", cards,
-        *(([f"- Живая инфографика: «{facts['live']['title']}»; месяцы {', '.join(facts['live']['months']) or '—'}; "
-            f"шаги: {', '.join(facts['live']['steps']) or '—'}; этапы: {', '.join(facts['live']['stages']) or '—'}; "
-            f"окон полного слайда {facts['live']['windows']}; заставка {'да' if facts['live']['intro'] else 'нет'}; "
-            f"CTA {'да' if facts['live']['cta'] else 'нет'}; субтитры {'да' if facts['live']['subtitles'] else 'нет'}"]) if facts.get("live") else []),
         f"- Файл: `{stats.get('file')}`",
         f"- Сборка: пересобрано {len(stats.get('rebuilt') or [])}, из кэша {len(stats.get('cached') or [])}, {stats.get('t_total', '?')} с", "",
         *_review_section(project),

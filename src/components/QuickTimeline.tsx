@@ -248,27 +248,6 @@ export function QuickTimeline() {
       if (x0 >= LABEL_W) { g.fillRect(x0 - 1, 2, 2, RULER - 4); g.beginPath(); g.moveTo(x0 + 1, 2); g.lineTo(x0 + 9, 6); g.lineTo(x0 + 1, 10); g.closePath(); g.fill(); }
       g.restore();
     }
-    // the live infographic layer: windows of the full slide as bars, every element's word as a diamond
-    const lay = q.live?.layer;
-    if (lay) {
-      g.save();
-      g.beginPath(); g.rect(LABEL_W, ro.y, size.w - LABEL_W, ro.h); g.clip();
-      for (const w of lay.windows) {
-        const x0 = X(w.t * fps), x1 = X(w.t1 * fps);
-        g.fillStyle = css("--accent"); g.globalAlpha = 0.28;
-        g.fillRect(x0, ro.y + ro.h - 9, Math.max(2, x1 - x0), 7);
-        g.globalAlpha = 1;
-        if (x1 - x0 > 60) { g.fillStyle = css("--fg-dim"); g.font = "10px sans-serif"; g.fillText(w.kind === "full" ? "полный слайд" : "крупная лента", x0 + 3, ro.y + ro.h - 11); }
-      }
-      const pts = [...lay.months, ...lay.marks, ...lay.cards].filter((e) => e.t !== null && e.t !== undefined);
-      for (const e of pts) {
-        const x = X(e.t! * fps);
-        if (x < LABEL_W || x > size.w) continue;
-        g.fillStyle = css("--accent");
-        g.beginPath(); g.moveTo(x, ro.y + 2); g.lineTo(x + 4, ro.y + 6); g.lineTo(x, ro.y + 10); g.lineTo(x - 4, ro.y + 6); g.closePath(); g.fill();
-      }
-      g.restore();
-    }
     const ra = row("audio")!;
     for (const a of d.tracks.audio) {
       const box = frame(a, ra, css("--track-a"), "");
